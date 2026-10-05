@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/elwardi/beads-tui/internal/bd"
+	"github.com/FoamScience/beads-tui/internal/bd"
 )
 
 func TestDump(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/FoamScience/beads-tui/internal/bd"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/elwardi/beads-tui/internal/bd"
 )
 
 // row is a group header, a blank spacer between groups, or an issue line (issue != nil).

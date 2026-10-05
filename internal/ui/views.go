@@ -8,8 +8,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/FoamScience/beads-tui/internal/bd"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/elwardi/beads-tui/internal/bd"
 )
 
 // listView is the common shape: rows built from the snapshot, shared list navigation.

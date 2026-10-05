@@ -10,8 +10,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/elwardi/beads-tui/internal/bd"
-	"github.com/elwardi/beads-tui/internal/ui"
+	"github.com/FoamScience/beads-tui/internal/bd"
+	"github.com/FoamScience/beads-tui/internal/ui"
 )
 
 var version = "dev" // set by make via -ldflags

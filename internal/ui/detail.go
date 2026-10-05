@@ -12,8 +12,8 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
+	"github.com/FoamScience/beads-tui/internal/bd"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/elwardi/beads-tui/internal/bd"
 )
 
 type commentsMsg struct {

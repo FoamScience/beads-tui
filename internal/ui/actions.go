@@ -13,7 +13,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/elwardi/beads-tui/internal/bd"
+	"github.com/FoamScience/beads-tui/internal/bd"
 )
 
 var issueTypes = []string{"task", "bug", "feature", "chore", "epic", "decision", "spike"}
