@@ -60,7 +60,7 @@ func (a *App) action(k string) (tea.Cmd, bool) {
 			if t == "" {
 				return nil
 			}
-			return a.write("note "+a.shortID(id), nil, "note", id, "--", t)
+			return a.write("note "+a.shortID(id), a.mut(id, func(i *bd.Issue) { i.Notes = appendNote(i.Notes, t) }), "note", id, "--", t)
 		})
 	case "p":
 		var opts []option
@@ -368,4 +368,12 @@ func (a *App) openRefs(is *bd.Issue) tea.Cmd {
 		return openRef(refs[i])
 	})
 	return nil
+}
+
+// appendNote mirrors bd note: the new note goes on its own line after the existing ones.
+func appendNote(notes, n string) string {
+	if strings.TrimSpace(notes) == "" {
+		return n
+	}
+	return strings.TrimRight(notes, "\n") + "\n" + n
 }
