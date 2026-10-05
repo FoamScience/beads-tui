@@ -67,6 +67,7 @@ type App struct {
 
 	modal   *modal
 	help    bool
+	marks   map[string]bool // issues picked with space; actions apply to all of them
 	state   *state
 	changed map[string]time.Time
 
@@ -93,11 +94,12 @@ func New(client bd.Client) *App {
 		user:    os.Getenv("USER"),
 		detail:  newDetail(),
 		changed: map[string]time.Time{},
+		marks:   map[string]bool{},
 		state:   loadState(),
 		idWidth: 8,
 		loading: true,
 	}
-	a.views = []View{newNow(), newReady(), newEpics(), newTriage(), newActivity(), newGraph(), newMolecules()}
+	a.views = []View{newNow(), newReady(), newEpics(), newTriage(), newActivity(), newGraph(), newMolecules(), newInbox()}
 	if cached := loadCache(client.Dir); len(cached) > 0 {
 		a.setSnapshot(bd.NewSnapshot(cached))
 		a.cached = true
@@ -166,8 +168,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// a snapshot read before an in-flight write would undo its optimistic change; the post-write load follows
 		if a.pending == 0 {
+			fresh := !a.cached && len(a.snap.Issues) > 0
+			old := a.snap
 			a.stamp, a.lastLoad, a.cached = msg.stamp, time.Now(), false
 			a.setSnapshot(bd.NewSnapshot(msg.issues))
+			if fresh {
+				return a, a.alert(old)
+			}
 		}
 		return a, nil
 	case tickMsg:
@@ -195,6 +202,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, a.load()
 		}
 		return a, nil
+	case resumeMsg:
+		return a, resumeClaude(msg.s)
 	case wlKeysMsg:
 		// the picker may have been closed or replaced while wl ran
 		if a.modal == msg.m {
@@ -357,8 +366,23 @@ func (a *App) key(msg tea.KeyPressMsg) tea.Cmd {
 	case "?":
 		a.help = true
 		return nil
-	case "1", "2", "3", "4", "5", "6", "7":
+	case "1", "2", "3", "4", "5", "6", "7", "8":
 		return a.switchTo(int(k[0] - '1'))
+	case "i":
+		return a.switchTo(len(a.views) - 1)
+	case "space":
+		if is := a.selected(); is != nil {
+			if a.marks[is.ID] {
+				delete(a.marks, is.ID)
+			} else {
+				a.marks[is.ID] = true
+			}
+			a.views[a.active].Update(a, tea.KeyPressMsg{Code: 'j', Text: "j"})
+		}
+		return nil
+	case "esc":
+		a.marks = map[string]bool{}
+		return nil
 	case "tab":
 		return a.switchTo(a.active + 1)
 	case "shift+tab":
@@ -507,6 +531,9 @@ func (a *App) header() string {
 	default:
 		st = sOK.Render("●") + sDim.Render(" "+age(a.lastLoad))
 	}
+	if n := pendingHuman(a.snap); n > 0 {
+		st = sWarn.Render(fmt.Sprintf("✉ %d", n)) + "  " + st
+	}
 	if !a.lastSync.IsZero() {
 		st += sDim.Render("  ⇅ " + age(a.lastSync))
 	}
@@ -537,10 +564,14 @@ func (a *App) footer() string {
 	if a.modal != nil {
 		return ""
 	}
+	if len(a.marks) > 0 {
+		hints = append(hints, fmt.Sprintf("%d marked", len(a.marks)), "space toggle", "esc clear")
+	}
 	if a.focusDetail || a.detailOpen || a.override != nil {
-		hints = []string{"j/k scroll", "Z fold", "o open ref", "s status", "n note", "c close", "esc back"}
+		hints = append(hints, "j/k scroll", "Z fold", "o open ref", "R resume", "s status", "n note", "c close", "esc back")
 	} else {
-		hints = append([]string{"enter detail"}, a.views[a.active].Hints()...)
+		hints = append(hints, "enter detail")
+		hints = append(hints, a.views[a.active].Hints()...)
 		if _, own := a.views[a.active].(*moleculesView); !own {
 			hints = append(hints, "s status", "n note", "c close")
 		}

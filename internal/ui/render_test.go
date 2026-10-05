@@ -27,7 +27,7 @@ func fixture() []bd.Issue {
 
 func TestViewsFitTerminal(t *testing.T) {
 	for _, size := range [][2]int{{60, 15}, {80, 24}, {120, 40}, {160, 50}} {
-		for tab := range 7 {
+		for tab := range 8 {
 			for _, enter := range []bool{false, true} {
 				name := fmt.Sprintf("%dx%d/tab%d/enter=%v", size[0], size[1], tab+1, enter)
 				a := New(bd.Client{Dir: t.TempDir()})
@@ -76,7 +76,7 @@ func TestCloseParentOffersCascade(t *testing.T) {
 	a := New(bd.Client{Dir: t.TempDir()})
 	a.state = defaultState()
 	a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
-	a.closeFlow("t-a")
+	a.closeFlow([]*bd.Issue{a.snap.ByID["t-a"]})
 	if a.modal == nil || !strings.Contains(a.modal.title, "3 open descendant") {
 		t.Fatalf("want cascade picker, got %+v", a.modal)
 	}
@@ -87,7 +87,7 @@ func TestCloseParentOffersCascade(t *testing.T) {
 		t.Fatalf("descendants %v", got)
 	}
 	a.modal = nil
-	a.closeFlow("t-a.3")
+	a.closeFlow([]*bd.Issue{a.snap.ByID["t-a.3"]})
 	if a.modal == nil || a.modal.picker {
 		t.Fatal("leaf without blockers should go straight to the reason prompt")
 	}
@@ -105,5 +105,48 @@ func TestNoteKeepsExistingNotes(t *testing.T) {
 	a.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if got := a.snap.ByID["t-a.1"].Notes; got != "first note\nsecond note\nthird" {
 		t.Fatalf("notes after adding one: %q", got)
+	}
+}
+
+func TestBulkEstimateCoversEveryMarkedIssue(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
+	a.marks = map[string]bool{"t-a.2": true, "t-a.3": true}
+	a.Update(tea.KeyPressMsg{Code: 'e', Text: "e"})
+	for _, r := range "45" {
+		a.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	a.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	for _, id := range []string{"t-a.2", "t-a.3"} {
+		if got := a.snap.ByID[id].EstimatedMinutes; got != 45 {
+			t.Errorf("%s estimate %d, want 45", id, got)
+		}
+	}
+	if a.snap.ByID["t-a.1"].EstimatedMinutes != 90 || len(a.marks) != 0 {
+		t.Error("unmarked issue changed or marks not cleared")
+	}
+}
+
+func TestInboxAndAlerts(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
+	old := a.snap
+	next := fixture()
+	next[3].Labels = []string{"human"}                              // t-a.3 flagged for the user
+	next[1].Status, next[1].ClosedAt = "closed", &next[1].UpdatedAt // in-progress t-a.1 closed
+	a.setSnapshot(bd.NewSnapshot(next))
+	ev := strings.Join(a.alertEvents(old), ",")
+	if !strings.Contains(ev, "needs you: a.3") || !strings.Contains(ev, "closed: a.1") {
+		t.Errorf("alerts: %q", ev)
+	}
+	if pendingHuman(a.snap) != 1 {
+		t.Errorf("pending human: %d", pendingHuman(a.snap))
+	}
+	inbox := a.views[len(a.views)-1].(*inboxView)
+	inbox.HandleKey("j")
+	if is := inbox.Selected(); is == nil || is.ID != "t-a.3" {
+		t.Errorf("inbox selection: %+v", is)
 	}
 }

@@ -79,7 +79,7 @@ func (v *epicsView) note(a *App, is *bd.Issue) string {
 func (v *epicsView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 	sel := v.Selected()
 	switch k.String() {
-	case "space", "z":
+	case "z":
 		if sel != nil && sel.IssueType == "epic" {
 			v.expanded[sel.ID] = !v.expanded[sel.ID]
 			v.Rebuild(a)
@@ -134,5 +134,5 @@ func lintSummary(out string) string {
 }
 
 func (v *epicsView) Hints() []string {
-	return []string{"space expand", "L lint", "H closed", "a new child"}
+	return []string{"z expand", "L lint", "H closed", "a new child"}
 }

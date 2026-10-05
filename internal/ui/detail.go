@@ -92,7 +92,7 @@ func (d *detail) render(a *App, is *bd.Issue, w, h int) string {
 	return d.vp.View()
 }
 
-var detailSections = []string{"description", "design", "acceptance", "notes", "comments", "deps", "children", "refs"}
+var detailSections = []string{"description", "design", "acceptance", "notes", "comments", "deps", "children", "refs", "sessions"}
 
 func (d *detail) content(a *App, is *bd.Issue, w int) string {
 	s := a.snap
@@ -134,6 +134,18 @@ func (d *detail) content(a *App, is *bd.Issue, w int) string {
 	if len(is.Labels) > 0 {
 		line(sDim.Render("labels"), strings.Join(is.Labels, "  "))
 	}
+	if !is.Closed() {
+		if chain := s.BlockChain(is); len(chain) > 0 {
+			parts := make([]string, len(chain))
+			for i, c := range chain {
+				parts[i] = glyph(s, c) + " " + a.shortID(c.ID)
+			}
+			line(sErr.Render("waits on"), strings.Join(parts, sDim.Render(" → ")))
+		}
+	}
+	if t := timeVsEstimate(s, is); t != "" {
+		line(sDim.Render("time"), t)
+	}
 	if is.CloseReason != "" {
 		line(sDim.Render("reason"), is.CloseReason)
 	}
@@ -160,6 +172,7 @@ func (d *detail) content(a *App, is *bd.Issue, w int) string {
 	section("deps", "Dependencies", d.deps(a, is, w))
 	section("children", "Children", d.children(a, is, w))
 	section("refs", "Refs", refsBody(is))
+	section("sessions", "Agent sessions", sessionsBody(is))
 	return b.String()
 }
 
@@ -284,4 +297,45 @@ func editorCmd(args ...string) *exec.Cmd {
 		ed = []string{"vi"}
 	}
 	return exec.Command(ed[0], append(ed[1:], args...)...)
+}
+
+// timeVsEstimate compares elapsed time (started to closed) with the estimate; for a parent it rolls up
+// the closed leaf descendants that have both, so nested estimates are not counted twice.
+// Elapsed is wall-clock time, not effort.
+func timeVsEstimate(s *bd.Snapshot, is *bd.Issue) string {
+	if is.StartedAt != nil && is.ClosedAt != nil && is.EstimatedMinutes > 0 {
+		el := int(is.ClosedAt.Sub(*is.StartedAt).Minutes())
+		return fmt.Sprintf("elapsed %s vs est %s (%.1f×)", minutes(el), minutes(is.EstimatedMinutes), float64(el)/float64(is.EstimatedMinutes))
+	}
+	if len(s.Children[is.ID]) == 0 {
+		return ""
+	}
+	var el, est, n int
+	var walk func(string)
+	walk = func(id string) {
+		for _, c := range s.Children[id] {
+			if len(s.Children[c.ID]) == 0 && c.StartedAt != nil && c.ClosedAt != nil && c.EstimatedMinutes > 0 {
+				el += int(c.ClosedAt.Sub(*c.StartedAt).Minutes())
+				est += c.EstimatedMinutes
+				n++
+			}
+			walk(c.ID)
+		}
+	}
+	walk(is.ID)
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d closed with estimates: elapsed %s vs est %s (%.1f×)", n, minutes(el), minutes(est), float64(el)/float64(est))
+}
+
+func sessionsBody(is *bd.Issue) string {
+	var b strings.Builder
+	for _, ss := range sessions(is) {
+		fmt.Fprintf(&b, " %s  %s\n", ss.id, sDim.Render("pane "+ss.pane))
+	}
+	if b.Len() > 0 {
+		b.WriteString(sDim.Render(" R resumes it, or focuses the pane if it is still open"))
+	}
+	return b.String()
 }

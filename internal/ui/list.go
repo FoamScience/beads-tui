@@ -175,9 +175,12 @@ func (l *issueList) renderRow(a *App, r row, sel bool, w int) string {
 			right = " " + right
 		}
 		marker := "  "
-		if sel {
+		switch {
+		case sel:
 			marker = sAccent.Render("▸ ")
-		} else if r.issue != nil && a.recentlyChanged(r.issue.ID) {
+		case r.issue != nil && a.marks[r.issue.ID]:
+			marker = sOK.Render("+ ")
+		case r.issue != nil && a.recentlyChanged(r.issue.ID):
 			marker = sAccent.Render("• ")
 		}
 		title := ansi.Truncate(r.header, max(w-lipgloss.Width(right)-6, 10), "…") + " "
@@ -186,9 +189,12 @@ func (l *issueList) renderRow(a *App, r row, sel bool, w int) string {
 	}
 	is := r.issue
 	marker := "  "
-	if sel {
+	switch {
+	case sel:
 		marker = sAccent.Render("▸ ")
-	} else if a.recentlyChanged(is.ID) {
+	case a.marks[is.ID]:
+		marker = sOK.Render("+ ")
+	case a.recentlyChanged(is.ID):
 		marker = sAccent.Render("• ")
 	}
 	indent := strings.Repeat("  ", r.indent)
@@ -198,6 +204,11 @@ func (l *issueList) renderRow(a *App, r row, sel bool, w int) string {
 		typ = sDim.Render(is.IssueType) + " "
 	}
 	note := r.note
+	if note == "" && !is.Closed() {
+		if chain := a.snap.BlockChain(is); len(chain) > 0 {
+			note = sErr.Render("⊘ " + a.shortID(chain[len(chain)-1].ID))
+		}
+	}
 	if note == "" {
 		note = a.machine(is)
 	}

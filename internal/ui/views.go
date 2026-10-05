@@ -232,10 +232,6 @@ func ready(s *bd.Snapshot, is *bd.Issue) bool {
 	return true
 }
 
-func nightshiftEligible(is *bd.Issue) bool {
-	return is.HasLabel("auto-ok") && is.LabelWithPrefix("machine:") != "" && is.EstimatedMinutes > 0
-}
-
 func (v *readyView) Rebuild(a *App) {
 	q := strings.ToLower(a.state.ReadyFilter)
 	var list []*bd.Issue
@@ -254,13 +250,7 @@ func (v *readyView) Rebuild(a *App) {
 		}
 		list = append(list, is)
 	}
-	rows := groupByEpic(a, list)
-	for i := range rows {
-		if rows[i].issue != nil && !rows[i].isHeader() && nightshiftEligible(rows[i].issue) {
-			rows[i].note = "⚑ night " + a.machine(rows[i].issue)
-		}
-	}
-	v.SetRows(rows)
+	v.SetRows(groupByEpic(a, list))
 }
 
 func (v *readyView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
@@ -383,3 +373,72 @@ func (v *triageView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 }
 
 func (v *triageView) Hints() []string { return []string{"[/] rule", "m machine", "x ref", "e est"} }
+
+// ---- Inbox ----
+
+// human beads are ones an agent flagged for the user with the "human" label (bd human list).
+func isHuman(is *bd.Issue) bool { return is.HasLabel("human") }
+
+func pendingHuman(s *bd.Snapshot) int {
+	n := 0
+	for _, is := range s.Issues {
+		if isHuman(is) && !is.Closed() {
+			n++
+		}
+	}
+	return n
+}
+
+type inboxView struct {
+	listView
+	showClosed bool
+}
+
+func newInbox() *inboxView { return &inboxView{listView: listView{empty: "nothing waiting on you"}} }
+
+func (v *inboxView) Name() string { return "Inbox" }
+
+func (v *inboxView) Rebuild(a *App) {
+	var list []*bd.Issue
+	for _, is := range a.snap.Issues {
+		if isHuman(is) && (v.showClosed || !is.Closed()) {
+			list = append(list, is)
+		}
+	}
+	v.SetRows(groupByEpic(a, list))
+}
+
+func (v *inboxView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
+	is := v.Selected()
+	switch k.String() {
+	case "H":
+		v.showClosed = !v.showClosed
+		v.Rebuild(a)
+		return true, nil
+	case "r", "X":
+		if is == nil || is.Closed() || !isHuman(is) {
+			return true, flash("select a pending human bead")
+		}
+		id := is.ID
+		if k.String() == "r" {
+			a.modal = newPrompt("Respond to "+a.shortID(id)+" (adds a comment and closes it)", "", func(t string) tea.Cmd {
+				if t == "" {
+					return flash("empty response, nothing sent")
+				}
+				return a.write("responded to "+a.shortID(id), a.mut(id, func(i *bd.Issue) { i.Status = "closed" }), "human", "respond", id, "--", t)
+			})
+		} else {
+			a.modal = newPrompt("Dismiss "+a.shortID(id)+": reason (optional)", "", func(t string) tea.Cmd {
+				args := []string{"human", "dismiss", id}
+				if t != "" {
+					args = append(args, "--", t)
+				}
+				return a.write("dismissed "+a.shortID(id), a.mut(id, func(i *bd.Issue) { i.Status = "closed" }), args...)
+			})
+		}
+		return true, nil
+	}
+	return v.HandleKey(k.String()), nil
+}
+
+func (v *inboxView) Hints() []string { return []string{"r respond", "X dismiss", "H handled"} }

@@ -45,12 +45,13 @@ Five views, one shared detail pane. Number keys switch views.
 | Key | View | Replaces |
 |---|---|---|
 | `1` | **Now**: in_progress, pinned, hooked, grouped by epic, live | `bd list --status ... -w` |
-| `2` | **Ready**: unblocked work, filter by machine/label/epic, nightshift column | `bd ready`, `--gated` |
+| `2` | **Ready**: unblocked work, filter by machine/label/epic | `bd ready` |
 | `3` | **Epics**: tree with progress, blocked count, swarm lint result | `--type epic`, `--parent`, `swarm validate` loop |
 | `4` | **Triage**: hygiene violations, fixable inline | the jq one-liner, wl ref chores |
 | `5` | **Activity**: recent changes across the DB, newest first | scrolling agent output |
 | `6` | **Graph**: dependency DAG of an epic or issue, navigable | `bd graph`, `bd dep`, `bd blocked` |
 | `7` | **Molecules**: formulas, protos, live molecules and wisps | `bd formula`, `bd cook`, `bd mol pour/wisp/progress/squash/burn` |
+| `8` / `i` | **Inbox**: beads an agent labelled `human`, pending first; `r` responds (comment + close), `X` dismisses; the header shows the pending count | `bd human list/respond/dismiss` |
 
 `/` searches everywhere (title, id, labels). `Enter` opens detail. `g` on any row opens Graph rooted at its epic. `?` shows all keys.
 
@@ -99,7 +100,7 @@ Five views, one shared detail pane. Number keys switch views.
   Refs   src/witness.lean  WitnessReduce.reduce  :142        o open
 ```
 
-Sections collapse with `Tab`. Notes come newest first, since that is where agents leave their reasoning.
+Sections collapse with `Z`. Notes come newest first, since that is where agents leave their reasoning. Under the labels, a blocked issue shows its blocker chain (`waits on x.5 → x.3`), followed from its own blockers and then its ancestors' down to the first one that is free to move; list rows show the last link as `⊘ x.3`. A `time` line compares elapsed time (started to closed, wall clock) with the estimate, and parents roll this up over their closed descendants. An `Agent sessions` section lists the Claude sessions the herdr-bd-sessions hook recorded when an agent claimed the bead.
 
 ### 3 Epics
 
@@ -114,8 +115,9 @@ A checklist of rule violations, each row fixable in place:
 | open/in_progress without `machine:` label | `m` add this host or pick |
 | root bead without `external_ref` (wl key) | `x` pick from `wl list --json` |
 | root bead without `estimated_minutes` | `e` |
-| task with no parent epic | `p` pick epic |
-| in_progress with no update for N days | `s` change status |
+| task with no parent epic | report only |
+| in_progress with no update for 3 days | `s` change status |
+| open epic whose children are all closed (same set as `bd epic close-eligible`) | `c` close |
 | code-touching task without `metadata.refs` | report only |
 
 Rules come from the CLAUDE.md beads rules, so the TUI enforces the same contract agents are told to follow.
@@ -135,7 +137,9 @@ Rules come from the CLAUDE.md beads rules, so the TUI enforces the same contract
 | `d` | defer until | `bd update --defer` |
 | `a` | quick create child of current epic | `bd create --parent -t` |
 | `o` | open ref in `$EDITOR` | none |
-| `y` | yank id | none |
+| `y` | yank id(s) | none |
+| `R` | resume the agent: focus its herdr pane if still open, else `claude --resume <session>` in the session's directory | `herdr pane get`, `herdr workspace/tab focus` |
+| `space` / `esc` | mark rows / clear marks; `s c p l m x e d C y` then act on every marked issue in one bd call | `bd update <ids…>`, `bd close <ids…>` |
 | `S` | sync with the Dolt remote | `bd sync` |
 
 Writes are optimistic: the row updates at once, and a failed command reverts it and shows the stderr line in the footer. Close and status changes on epics ask for confirmation.
