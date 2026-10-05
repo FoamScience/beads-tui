@@ -30,6 +30,17 @@ var TriageRules = []TriageRule{
 	{"stale-in-progress", "in progress, idle 3+ days", "bd update {id} --status open|blocked|deferred, or bd close {id}", "s", func(s *Snapshot, is *Issue) bool {
 		return is.Status == "in_progress" && time.Since(is.UpdatedAt) > 72*time.Hour
 	}},
+	{"closable-epic", "epic with every child closed", "bd close {id}", "c", func(s *Snapshot, is *Issue) bool {
+		if is.IssueType != "epic" || is.Closed() || len(s.Children[is.ID]) == 0 {
+			return false
+		}
+		for _, c := range s.Children[is.ID] {
+			if !c.Closed() {
+				return false
+			}
+		}
+		return true
+	}},
 	{"repo-task-without-refs", "repo task without code refs", `bd update {id} --metadata '{"refs":[{"repo":"~/repo/x","file":"path","symbol":"Name","line":1}]}'`, "", func(s *Snapshot, is *Issue) bool {
 		return is.Status == "in_progress" && is.IssueType != "epic" && is.LabelWithPrefix("repo:") != "" && len(is.Refs()) == 0
 	}},

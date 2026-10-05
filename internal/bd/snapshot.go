@@ -71,6 +71,31 @@ func (s *Snapshot) Dependents(id string) []Dependency {
 
 func (s *Snapshot) IsBlocked(is *Issue) bool { return len(s.Blockers(is)) > 0 }
 
+// BlockChain follows open blockers (the issue's own, then its ancestors') down to the first
+// one that is not blocked itself: the work that has to move before this issue can.
+func (s *Snapshot) BlockChain(is *Issue) []*Issue {
+	var chain []*Issue
+	seen := map[string]bool{is.ID: true}
+	for cur := is; ; {
+		next := s.firstBlocker(cur)
+		if next == nil || seen[next.ID] {
+			return chain
+		}
+		seen[next.ID] = true
+		chain = append(chain, next)
+		cur = next
+	}
+}
+
+func (s *Snapshot) firstBlocker(is *Issue) *Issue {
+	for p := is; p != nil; p = s.ByID[p.Parent] {
+		if b := s.Blockers(p); len(b) > 0 {
+			return b[0]
+		}
+	}
+	return nil
+}
+
 // Epic returns the nearest epic ancestor, or nil.
 func (s *Snapshot) Epic(is *Issue) *Issue {
 	for p := s.ByID[is.Parent]; p != nil; p = s.ByID[p.Parent] {

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,7 +19,53 @@ import (
 
 var issueTypes = []string{"task", "bug", "feature", "chore", "epic", "decision", "spike"}
 
-// action handles the one-key mutations that work on the selected issue from any view.
+// targets are the marked issues, or the selected one when nothing is marked.
+func (a *App) targets() []*bd.Issue {
+	var out []*bd.Issue
+	for id := range a.marks {
+		if is := a.snap.ByID[id]; is != nil {
+			out = append(out, is)
+		}
+	}
+	if len(out) == 0 {
+		if is := a.selected(); is != nil {
+			out = append(out, is)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return bd.IDLess(out[i].ID, out[j].ID) })
+	return out
+}
+
+func ids(is []*bd.Issue) []string {
+	out := make([]string, len(is))
+	for i, x := range is {
+		out[i] = x.ID
+	}
+	return out
+}
+
+// label names the targets in prompts and flashes: one id, or a count.
+func (a *App) label(ts []*bd.Issue) string {
+	if len(ts) == 1 {
+		return a.shortID(ts[0].ID)
+	}
+	return fmt.Sprintf("%d issues", len(ts))
+}
+
+// update runs one bd update over every target, applies f optimistically and clears the marks.
+func (a *App) update(ts []*bd.Issue, desc string, f func(*bd.Issue), flags ...string) tea.Cmd {
+	a.marks = map[string]bool{}
+	mutate := func() {
+		for _, t := range ts {
+			if f != nil {
+				a.mut(t.ID, f)()
+			}
+		}
+	}
+	return a.write(desc, mutate, append(append([]string{"update"}, ids(ts)...), flags...)...)
+}
+
+// action handles the one-key mutations that work on the marked issues or the selection, from any view.
 func (a *App) action(k string) (tea.Cmd, bool) {
 	switch k {
 	case "S":
@@ -26,35 +73,35 @@ func (a *App) action(k string) (tea.Cmd, bool) {
 	case "a":
 		return a.createChild(a.selected()), true
 	}
-	is := a.selected()
-	if is == nil {
+	ts := a.targets()
+	if len(ts) == 0 {
 		return nil, false
 	}
-	id := is.ID
+	is, id, who := ts[0], ts[0].ID, a.label(ts)
 	switch k {
 	case "s":
 		opts := make([]option, 0, len(statuses))
 		for _, s := range statuses {
 			opts = append(opts, option{s, statusGlyph[s] + " " + s})
 		}
-		a.modal = newPicker("Status of "+a.shortID(id), opts, func(st string) tea.Cmd {
+		a.modal = newPicker("Status of "+who, opts, func(st string) tea.Cmd {
 			if st == "closed" {
-				a.closeFlow(id)
+				a.closeFlow(ts)
 				return nil
 			}
 			run := func() tea.Cmd {
-				return a.write(a.shortID(id)+" → "+st, a.mut(id, func(i *bd.Issue) { i.Status = st }), "update", id, "--status", st)
+				return a.update(ts, who+" → "+st, func(i *bd.Issue) { i.Status = st }, "--status", st)
 			}
-			if is.IssueType == "epic" {
-				a.modal = newConfirm(fmt.Sprintf("Set epic %s to %s?", a.shortID(id), st), run)
+			if slices.ContainsFunc(ts, func(t *bd.Issue) bool { return t.IssueType == "epic" }) {
+				a.modal = newConfirm(fmt.Sprintf("Set %s (includes an epic) to %s?", who, st), run)
 				return nil
 			}
 			return run()
 		})
 	case "C":
-		return a.write("claim "+a.shortID(id), a.mut(id, func(i *bd.Issue) { i.Status = "in_progress" }), "update", id, "--claim"), true
+		return a.update(ts, "claim "+who, func(i *bd.Issue) { i.Status = "in_progress" }, "--claim"), true
 	case "c":
-		a.closeFlow(id)
+		a.closeFlow(ts)
 	case "n":
 		a.modal = newPrompt("Note on "+a.shortID(id), "", func(t string) tea.Cmd {
 			if t == "" {
@@ -67,74 +114,82 @@ func (a *App) action(k string) (tea.Cmd, bool) {
 		for p := 0; p <= 4; p++ {
 			opts = append(opts, option{strconv.Itoa(p), fmt.Sprintf("P%d", p)})
 		}
-		a.modal = newPicker("Priority of "+a.shortID(id), opts, func(v string) tea.Cmd {
+		a.modal = newPicker("Priority of "+who, opts, func(v string) tea.Cmd {
 			n, _ := strconv.Atoi(v)
-			return a.write(a.shortID(id)+" → P"+v, a.mut(id, func(i *bd.Issue) { i.Priority = n }), "update", id, "--priority", v)
+			return a.update(ts, who+" → P"+v, func(i *bd.Issue) { i.Priority = n }, "--priority", v)
 		})
 	case "l":
+		all := func(l string) bool {
+			return !slices.ContainsFunc(ts, func(t *bd.Issue) bool { return !t.HasLabel(l) })
+		}
 		var opts []option
 		for _, l := range a.knownLabels("") {
 			mark := "  "
-			if is.HasLabel(l) {
+			if all(l) {
 				mark = "✓ "
 			}
 			opts = append(opts, option{l, mark + l})
 		}
-		a.modal = newPicker("Toggle label on "+a.shortID(id), opts, func(l string) tea.Cmd {
-			if cur := a.snap.ByID[id]; cur != nil && cur.HasLabel(l) {
-				return a.write("-"+l, nil, "update", id, "--remove-label", l)
+		a.modal = newPicker("Toggle label on "+who, opts, func(l string) tea.Cmd {
+			if all(l) {
+				return a.update(ts, "-"+l+" on "+who, nil, "--remove-label", l)
 			}
-			return a.write("+"+l, nil, "update", id, "--add-label", l)
+			return a.update(ts, "+"+l+" on "+who, nil, "--add-label", l)
 		})
 	case "m":
 		var opts []option
 		for _, l := range a.knownLabels("machine:") {
 			opts = append(opts, option{l, strings.TrimPrefix(l, "machine:")})
 		}
-		a.modal = newPicker("Machine for "+a.shortID(id), opts, func(l string) tea.Cmd {
+		a.modal = newPicker("Machine for "+who, opts, func(l string) tea.Cmd {
 			if !strings.HasPrefix(l, "machine:") {
 				l = "machine:" + l
 			}
-			args := []string{"update", id, "--add-label", l}
-			if cur := a.snap.ByID[id]; cur != nil {
-				if old := cur.LabelWithPrefix("machine:"); old != "" && "machine:"+old != l {
-					args = append(args, "--remove-label", "machine:"+old)
+			flags := []string{"--add-label", l}
+			seen := map[string]bool{l: true}
+			for _, t := range ts {
+				if old := t.LabelWithPrefix("machine:"); old != "" && !seen["machine:"+old] {
+					seen["machine:"+old] = true
+					flags = append(flags, "--remove-label", "machine:"+old)
 				}
 			}
-			return a.write(a.shortID(id)+" on "+strings.TrimPrefix(l, "machine:"), nil, args...)
+			return a.update(ts, who+" on "+strings.TrimPrefix(l, "machine:"), nil, flags...)
 		})
 		a.modal.input.Placeholder = "filter or type a host"
 	case "x":
-		m := newPicker("External ref for "+a.shortID(id), []option{{"", "(clear)"}}, func(v string) tea.Cmd {
-			return a.write(a.shortID(id)+" ref "+v, a.mut(id, func(i *bd.Issue) { i.ExternalRef = v }), "update", id, "--external-ref", v)
+		m := newPicker("External ref for "+who, []option{{"", "(clear)"}}, func(v string) tea.Cmd {
+			return a.update(ts, who+" ref "+v, func(i *bd.Issue) { i.ExternalRef = v }, "--external-ref", v)
 		})
 		m.input.Placeholder = "filter wl keys or type a ref"
 		a.modal = m
 		return func() tea.Msg { return wlKeysMsg{m, wlKeys()} }, true
 	case "e":
 		cur := ""
-		if is.EstimatedMinutes > 0 {
+		if len(ts) == 1 && is.EstimatedMinutes > 0 {
 			cur = strconv.Itoa(is.EstimatedMinutes)
 		}
-		a.modal = newPrompt("Estimate for "+a.shortID(id)+" (minutes, or 2h / 1h30m)", cur, func(v string) tea.Cmd {
+		a.modal = newPrompt("Estimate for "+who+" (minutes, or 2h / 1h30m)", cur, func(v string) tea.Cmd {
 			m, err := parseMinutes(v)
 			if err != nil {
 				return flashErr(err)
 			}
-			return a.write(a.shortID(id)+" est "+minutes(m), a.mut(id, func(i *bd.Issue) { i.EstimatedMinutes = m }), "update", id, "-e", strconv.Itoa(m))
+			return a.update(ts, who+" est "+minutes(m), func(i *bd.Issue) { i.EstimatedMinutes = m }, "-e", strconv.Itoa(m))
 		})
 	case "d":
-		a.modal = newPrompt("Defer "+a.shortID(id)+" until (YYYY-MM-DD, +3d, empty clears)", "", func(v string) tea.Cmd {
+		a.modal = newPrompt("Defer "+who+" until (YYYY-MM-DD, +3d, empty clears)", "", func(v string) tea.Cmd {
 			v, err := parseDate(v)
 			if err != nil {
 				return flashErr(err)
 			}
-			return a.write(a.shortID(id)+" deferred "+v, nil, "update", id, "--defer", v)
+			return a.update(ts, who+" deferred "+v, nil, "--defer", v)
 		})
 	case "y":
-		return tea.Batch(tea.SetClipboard(id), flash("copied "+id)), true
+		s := strings.Join(ids(ts), " ")
+		return tea.Batch(tea.SetClipboard(s), flash("copied "+s)), true
 	case "o":
 		return a.openRefs(is), true
+	case "R":
+		return a.resume(is), true
 	default:
 		return nil, false
 	}
@@ -281,61 +336,72 @@ func (a *App) openDescendants(id string) []string {
 	return out
 }
 
-// closeFlow closes an issue; bd refuses a parent with open children or a live blocker, so those cases ask first.
-func (a *App) closeFlow(id string) {
-	is := a.snap.ByID[id]
-	if is == nil {
-		return
+// closeFlow closes issues; bd refuses a parent with open children or a live blocker, so those cases ask first.
+func (a *App) closeFlow(ts []*bd.Issue) {
+	who := a.label(ts)
+	targets := ids(ts)
+	inSet := map[string]bool{}
+	for _, id := range targets {
+		inSet[id] = true
 	}
-	short := a.shortID(id)
-	kids := a.openDescendants(id)
-	blockers := a.snap.Blockers(is)
-	ask := func(ids []string, force bool) {
-		label := short
-		if len(ids) > 1 {
-			label = fmt.Sprintf("%s and %d descendant(s)", short, len(ids)-1)
+	var kids []string
+	var blocked bool
+	for _, t := range ts {
+		for _, k := range a.openDescendants(t.ID) {
+			if !inSet[k] {
+				inSet[k] = true
+				kids = append(kids, k)
+			}
+		}
+		blocked = blocked || len(a.snap.Blockers(t)) > 0
+	}
+	ask := func(closing []string, force bool) {
+		label := who
+		if len(closing) > len(targets) {
+			label = fmt.Sprintf("%s and %d descendant(s)", who, len(closing)-len(targets))
 		}
 		a.modal = newPrompt("Close "+label+": reason (optional)", "", func(r string) tea.Cmd {
-			args := append([]string{"close"}, ids...)
+			args := append([]string{"close"}, closing...)
 			if r != "" {
 				args = append(args, "--reason", r)
 			}
 			if force {
 				args = append(args, "--force")
 			}
+			a.marks = map[string]bool{}
 			return a.write("close "+label, func() {
-				for _, x := range ids {
+				for _, x := range closing {
 					a.mut(x, func(i *bd.Issue) { i.Status = "closed" })()
 				}
 			}, args...)
 		})
 	}
-	if len(kids) == 0 && len(blockers) == 0 {
-		if is.IssueType == "epic" {
-			a.modal = newConfirm("Close epic "+short+"?", func() tea.Cmd { ask([]string{id}, false); return nil })
+	if len(kids) == 0 && !blocked {
+		if slices.ContainsFunc(ts, func(t *bd.Issue) bool { return t.IssueType == "epic" }) {
+			a.modal = newConfirm("Close "+who+" (includes an epic)?", func() tea.Cmd { ask(targets, false); return nil })
 			return
 		}
-		ask([]string{id}, false)
+		ask(targets, false)
 		return
 	}
 	var why []string
 	if len(kids) > 0 {
 		why = append(why, fmt.Sprintf("%d open descendant(s)", len(kids)))
 	}
-	if len(blockers) > 0 {
-		why = append(why, fmt.Sprintf("%d open blocker(s)", len(blockers)))
+	if blocked {
+		why = append(why, "open blockers")
 	}
 	var opts []option
 	if len(kids) > 0 {
-		opts = append(opts, option{"cascade", fmt.Sprintf("Close all: %d descendant(s), then %s", len(kids), short)})
+		opts = append(opts, option{"cascade", fmt.Sprintf("Close all: %d descendant(s), then %s", len(kids), who)})
 	}
-	opts = append(opts, option{"force", "Force-close only " + short + " (--force)"}, option{"cancel", "Cancel"})
-	a.modal = newPicker(short+" has "+strings.Join(why, " and "), opts, func(choice string) tea.Cmd {
+	opts = append(opts, option{"force", "Force-close only " + who + " (--force)"}, option{"cancel", "Cancel"})
+	a.modal = newPicker(who+" has "+strings.Join(why, " and "), opts, func(choice string) tea.Cmd {
 		switch choice {
 		case "cascade":
-			ask(append(kids, id), len(blockers) > 0)
+			ask(append(kids, targets...), blocked)
 		case "force":
-			ask([]string{id}, true)
+			ask(targets, true)
 		}
 		return nil
 	})
