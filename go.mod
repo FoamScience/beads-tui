@@ -1,4 +1,4 @@
-module github.com/elwardi/beads-tui
+module github.com/FoamScience/beads-tui
 
 go 1.26.0
 

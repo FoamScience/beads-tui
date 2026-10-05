@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/elwardi/beads-tui/internal/bd"
+	"github.com/FoamScience/beads-tui/internal/bd"
 )
 
 // state is the per-user UI state kept across runs.

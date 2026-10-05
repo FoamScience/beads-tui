@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
-	"github.com/elwardi/beads-tui/internal/bd"
+	"github.com/FoamScience/beads-tui/internal/bd"
 )
 
 // ANSI 16 colours follow the terminal theme, so one palette works on dark and light backgrounds.

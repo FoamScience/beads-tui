@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/FoamScience/beads-tui/internal/bd"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/elwardi/beads-tui/internal/bd"
 )
 
 const (
