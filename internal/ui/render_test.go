@@ -92,3 +92,18 @@ func TestCloseParentOffersCascade(t *testing.T) {
 		t.Fatal("leaf without blockers should go straight to the reason prompt")
 	}
 }
+
+func TestNoteKeepsExistingNotes(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
+	a.override = a.snap.ByID["t-a.1"]
+	a.focusDetail = true
+	a.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	for _, r := range "third" {
+		a.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	a.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if got := a.snap.ByID["t-a.1"].Notes; got != "first note\nsecond note\nthird" {
+		t.Fatalf("notes after adding one: %q", got)
+	}
+}
