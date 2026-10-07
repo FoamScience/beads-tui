@@ -51,7 +51,7 @@ Five views, one shared detail pane. Number keys switch views.
 | `5` | **Activity**: recent changes across the DB, newest first | scrolling agent output |
 | `6` | **Graph**: dependency DAG of an epic or issue, navigable | `bd graph`, `bd dep`, `bd blocked` |
 | `7` | **Molecules**: formulas, protos, live molecules and wisps | `bd formula`, `bd cook`, `bd mol pour/wisp/progress/squash/burn` |
-| `8` / `i` | **Inbox**: beads an agent labelled `human`, pending first; `r` responds (comment + close), `X` dismisses; the header shows the pending count | `bd human list/respond/dismiss` |
+| `8` / `i` | **Inbox**: beads an agent labelled `human`, pending first; `r` responds (comment + close), `X` dismisses; follows the same machine filter as Now and Ready (`M`: this machine by default, all, or one host), and the header badge counts what that filter shows; a human bead with no machine label shows under every filter | `bd human list/respond/dismiss` |
 | `9` / `b` | **Board**: kanban lanes Ready, Blocked, In progress, Deferred, Done (last 7 days), non-epic issues only; `h/l` columns, `j/k` cards, `H/L` move the card (or the marked cards) to the next lane, which sets its status; `E` scopes the board to one epic | `bd update --status`, close flow for Done |
 
 `/` searches everywhere (title, id, labels). `Enter` opens detail. `g` on any row opens Graph rooted at its epic. `?` shows all keys.

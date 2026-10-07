@@ -561,7 +561,7 @@ func (a *App) header() string {
 	default:
 		st = sOK.Render("●") + sDim.Render(" "+age(a.lastLoad))
 	}
-	if n := pendingHuman(a.snap); n > 0 {
+	if n := a.pendingHuman(); n > 0 {
 		st = sWarn.Render(fmt.Sprintf("✉ %d", n)) + "  " + st
 	}
 	if !a.lastSync.IsZero() {
