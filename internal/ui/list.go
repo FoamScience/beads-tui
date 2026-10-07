@@ -18,6 +18,7 @@ type row struct {
 	issue  *bd.Issue
 	indent int
 	note   string // replaces the machine column when set (e.g. triage reason)
+	agent  bool   // the column shows only the linked agent session, blank when there is none
 }
 
 // issueList is the shared scrolling list used by every list-shaped view.
@@ -204,12 +205,17 @@ func (l *issueList) renderRow(a *App, r row, sel bool, w int) string {
 		typ = sDim.Render(is.IssueType) + " "
 	}
 	note := r.note
-	if note == "" && !is.Closed() {
+	if r.agent {
+		note = a.agentNote(is)
+	} else if note == "" && is.Status == "in_progress" {
+		note = a.agentNote(is)
+	}
+	if note == "" && !r.agent && !is.Closed() {
 		if chain := a.snap.BlockChain(is); len(chain) > 0 {
 			note = sErr.Render("⊘ " + a.shortID(chain[len(chain)-1].ID))
 		}
 	}
-	if note == "" {
+	if note == "" && !r.agent {
 		note = a.machine(is)
 	}
 	ag := age(is.UpdatedAt)
@@ -224,6 +230,9 @@ func (l *issueList) renderRow(a *App, r row, sel bool, w int) string {
 	}
 	if l.noteW > 0 {
 		noteW = l.noteW
+	}
+	if r.agent && w >= 75 {
+		noteW = max(noteW, 16) // session names are the point of Now's column
 	}
 	right := fmt.Sprintf(" %s %s %s",
 		sDim.Render(padRight(ansi.Truncate(note, noteW, "…"), noteW)),

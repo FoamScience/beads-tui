@@ -4,6 +4,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -63,13 +64,16 @@ type App struct {
 	detail      *detail
 	detailOpen  bool      // full-screen detail in narrow terminals
 	focusDetail bool      // keys go to the detail pane
-	override    *bd.Issue // detail target picked from search, outside the current view
+	override    *bd.Issue // detail target picked from search or a link, outside the current view
+	history     []string  // issues opened through detail links; "" stands for the view's selection
 
-	modal   *modal
-	help    bool
-	marks   map[string]bool // issues picked with space; actions apply to all of them
-	state   *state
-	changed map[string]time.Time
+	modal        *modal
+	help         bool
+	marks        map[string]bool        // issues picked with space; actions apply to all of them
+	herdr        map[string]agentPane   // live agent panes by Claude session id; nil when herdr is unavailable
+	sessionNames map[string]sessionInfo // titles of ended sessions, read from their transcripts
+	state        *state
+	changed      map[string]time.Time
 
 	stamp    string
 	gen      int // id of the newest load; older results are dropped
@@ -88,18 +92,19 @@ type App struct {
 func New(client bd.Client) *App {
 	host, _ := os.Hostname()
 	a := &App{
-		client:  client,
-		snap:    bd.NewSnapshot(nil),
-		host:    host,
-		user:    os.Getenv("USER"),
-		detail:  newDetail(),
-		changed: map[string]time.Time{},
-		marks:   map[string]bool{},
-		state:   loadState(),
-		idWidth: 8,
-		loading: true,
+		client:       client,
+		snap:         bd.NewSnapshot(nil),
+		host:         host,
+		user:         os.Getenv("USER"),
+		detail:       newDetail(),
+		changed:      map[string]time.Time{},
+		marks:        map[string]bool{},
+		sessionNames: map[string]sessionInfo{},
+		state:        loadState(),
+		idWidth:      8,
+		loading:      true,
 	}
-	a.views = []View{newNow(), newReady(), newEpics(), newTriage(), newActivity(), newGraph(), newMolecules(), newInbox()}
+	a.views = []View{newNow(), newReady(), newEpics(), newTriage(), newActivity(), newGraph(), newMolecules(), newInbox(), newKanban()}
 	if cached := loadCache(client.Dir); len(cached) > 0 {
 		a.setSnapshot(bd.NewSnapshot(cached))
 		a.cached = true
@@ -108,7 +113,7 @@ func New(client bd.Client) *App {
 }
 
 func (a *App) Init() tea.Cmd {
-	return tea.Batch(a.load(), tick(), tea.RequestBackgroundColor)
+	return tea.Batch(a.load(), tick(), tea.RequestBackgroundColor, a.herdrPoll())
 }
 
 func tick() tea.Cmd {
@@ -179,6 +184,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case tickMsg:
 		cmds := []tea.Cmd{tick()}
+		if time.Time(msg).Second()%herdrEvery == 0 {
+			cmds = append(cmds, a.herdrPoll())
+		}
 		if !a.loading && a.pending == 0 {
 			retry := a.loadErr != nil && time.Now().After(a.retryAt)
 			changed := a.loadErr == nil && a.client.ChangeStamp() != a.stamp
@@ -202,8 +210,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, a.load()
 		}
 		return a, nil
-	case resumeMsg:
-		return a, resumeClaude(msg.s)
+	case herdrMsg:
+		if msg.err == nil {
+			a.herdr = msg.panes
+		}
+		return a, a.nameEndedSessions()
+	case sessionNamesMsg:
+		for id, info := range msg {
+			a.sessionNames[id] = info
+		}
+		return a, nil
 	case wlKeysMsg:
 		// the picker may have been closed or replaced while wl ran
 		if a.modal == msg.m {
@@ -310,7 +326,7 @@ func (a *App) selected() *bd.Issue {
 // split shows the detail pane beside list views; Graph and Molecules use the full width themselves.
 func (a *App) split() bool {
 	switch a.views[a.active].(type) {
-	case *graphView, *moleculesView:
+	case *graphView, *moleculesView, *kanbanView:
 		return false
 	}
 	return a.w >= splitMinWidth
@@ -336,7 +352,30 @@ func (a *App) key(msg tea.KeyPressMsg) tea.Cmd {
 	if a.focusDetail || a.detailOpen || a.override != nil {
 		switch k {
 		case "esc", "q", "h", "left":
+			if n := len(a.history); n > 0 {
+				prev := a.history[n-1]
+				a.history = a.history[:n-1]
+				a.override = a.snap.ByID[prev]
+				return nil
+			}
 			a.focusDetail, a.detailOpen, a.override = false, false, nil
+			return nil
+		case "tab":
+			a.detail.moveLink(1)
+			return nil
+		case "shift+tab":
+			a.detail.moveLink(-1)
+			return nil
+		case "enter":
+			if t := a.snap.ByID[a.detail.selectedLink()]; t != nil {
+				cur := ""
+				if a.override != nil {
+					cur = a.override.ID
+				}
+				a.history = append(a.history, cur)
+				a.override, a.focusDetail = t, true
+				return a.detail.loadComments(a, t)
+			}
 			return nil
 		case "j", "down", "k", "up", "ctrl+d", "ctrl+u", "pgdown", "pgup", "space":
 			a.scrollDetail(k)
@@ -366,10 +405,12 @@ func (a *App) key(msg tea.KeyPressMsg) tea.Cmd {
 	case "?":
 		a.help = true
 		return nil
-	case "1", "2", "3", "4", "5", "6", "7", "8":
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		return a.switchTo(int(k[0] - '1'))
 	case "i":
-		return a.switchTo(len(a.views) - 1)
+		return a.switchTo(a.viewIndex("Inbox"))
+	case "b":
+		return a.switchTo(a.viewIndex("Board"))
 	case "space":
 		if is := a.selected(); is != nil {
 			if a.marks[is.ID] {
@@ -455,7 +496,7 @@ func (a *App) searchModal() *modal {
 		opts = append(opts, option{value: is.ID, label: fmt.Sprintf("%s %s  %s  %s", statusGlyph[is.Status], a.shortID(is.ID), is.Title, strings.Join(is.Labels, " "))})
 	}
 	m := newPicker("Search all issues", opts, func(id string) tea.Cmd {
-		a.override = a.snap.ByID[id]
+		a.override, a.history = a.snap.ByID[id], nil
 		if a.override == nil {
 			return nil
 		}
@@ -509,17 +550,6 @@ func (a *App) render() string {
 }
 
 func (a *App) header() string {
-	left := " " + sBold.Foreground(cAccent).Render("bt") + "  " + sDim.Render(strings.Replace(a.client.Dir, os.Getenv("HOME"), "~", 1))
-	var tabs []string
-	for i, v := range a.views {
-		label := fmt.Sprintf("%d %s", i+1, v.Name())
-		if i == a.active {
-			tabs = append(tabs, sTabOn.Render(label))
-		} else {
-			tabs = append(tabs, sTabOff.Render(label))
-		}
-	}
-	tabStr := strings.Join(tabs, "  ")
 	var st string
 	switch {
 	case a.loadErr != nil:
@@ -538,16 +568,34 @@ func (a *App) header() string {
 		st += sDim.Render("  ⇅ " + age(a.lastSync))
 	}
 	right := st + " "
-	if a.w < 110 {
-		left = " " + sBold.Foreground(cAccent).Render("bt")
+	// the whole bar is for tabs: tighten spacing, then drop inactive names, so every number stays visible
+	for _, layout := range []struct {
+		sep   string
+		names bool
+	}{{"  ", true}, {" ", true}, {" ", false}} {
+		tabs := " " + a.tabs(layout.sep, layout.names)
+		if gap := a.w - lipgloss.Width(tabs) - lipgloss.Width(right); gap >= 1 {
+			return tabs + strings.Repeat(" ", gap) + right
+		}
 	}
-	gap := a.w - lipgloss.Width(left) - lipgloss.Width(tabStr) - lipgloss.Width(right)
-	if gap < 2 {
-		tabStr = sTabOn.Render(fmt.Sprintf("%d %s", a.active+1, a.views[a.active].Name()))
-		gap = max(a.w-lipgloss.Width(left)-lipgloss.Width(tabStr)-lipgloss.Width(right), 1)
+	return ansi.Truncate(" "+a.tabs(" ", false)+" "+right, a.w, "…")
+}
+
+// tabs renders the view switcher; without names, only the active view keeps its label.
+func (a *App) tabs(sep string, names bool) string {
+	out := make([]string, len(a.views))
+	for i, v := range a.views {
+		label := fmt.Sprintf("%d %s", i+1, v.Name())
+		if i != a.active && !names {
+			label = fmt.Sprintf("%d", i+1)
+		}
+		if i == a.active {
+			out[i] = sTabOn.Render(label)
+		} else {
+			out[i] = sTabOff.Render(label)
+		}
 	}
-	l := gap / 2
-	return left + strings.Repeat(" ", l) + tabStr + strings.Repeat(" ", gap-l) + right
+	return strings.Join(out, sep)
 }
 
 func (a *App) footer() string {
@@ -568,7 +616,7 @@ func (a *App) footer() string {
 		hints = append(hints, fmt.Sprintf("%d marked", len(a.marks)), "space toggle", "esc clear")
 	}
 	if a.focusDetail || a.detailOpen || a.override != nil {
-		hints = append(hints, "j/k scroll", "Z fold", "o open ref", "R resume", "s status", "n note", "c close", "esc back")
+		hints = append(hints, "tab links", "enter open", "j/k scroll", "Z fold", "o open ref", "R resume", "s status", "n note", "c close", "esc back")
 	} else {
 		hints = append(hints, "enter detail")
 		hints = append(hints, a.views[a.active].Hints()...)
@@ -587,4 +635,22 @@ func renderHints(hs []string) string {
 		out[i] = sKey.Render(k) + " " + sDim.Render(rest)
 	}
 	return strings.Join(out, "  ")
+}
+
+func (a *App) viewIndex(name string) int {
+	for i, v := range a.views {
+		if v.Name() == name {
+			return i
+		}
+	}
+	return a.active
+}
+
+const herdrEvery = 3 // seconds between herdr pane polls
+
+func (a *App) herdrPoll() tea.Cmd {
+	if _, err := exec.LookPath("herdr"); err != nil {
+		return nil
+	}
+	return pollHerdr()
 }

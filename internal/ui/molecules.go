@@ -294,6 +294,11 @@ func (v *moleculesView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 	case "h", "l", "left", "right":
 		_, cmd := v.preview.Update(a, k)
 		return true, cmd
+	case "J", "K":
+		// j/k move the list, so shifted keys walk the step graph vertically
+		key := map[string]string{"J": "j", "K": "k"}[k.String()]
+		_, cmd := v.preview.Update(a, tea.KeyPressMsg{Code: rune(key[0]), Text: key})
+		return true, cmd
 	case "H":
 		v.showClosed = !v.showClosed
 		v.Rebuild(a)
@@ -551,14 +556,14 @@ func (v *moleculesView) spawn(a *App, spec spawnSpec) tea.Cmd {
 }
 
 func (v *moleculesView) Hints() []string {
-	return []string{"p pour", "w wisp", "n new", "E edit", "d distill", "Q squash", "B burn", "h/l steps", "H closed"}
+	return []string{"p pour", "w wisp", "n new", "E edit", "d distill", "Q squash", "B burn", "h/l J/K steps", "H closed"}
 }
 
 func (v *moleculesView) Render(a *App, w, h int) string {
 	if !v.loaded {
 		return sDim.Render("\n  loading formulas…")
 	}
-	lw := min(max(w/3, 34), 52)
+	lw := min(max(w/4, 28), 40)
 	left := v.renderList(a, lw, h)
 	right := v.renderPreview(a, w-lw-3, h)
 	sep := strings.TrimRight(strings.Repeat(sRule.Render("│")+"\n", h), "\n")

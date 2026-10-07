@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/FoamScience/beads-tui/internal/bd"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func fixture() []bd.Issue {
@@ -27,7 +28,7 @@ func fixture() []bd.Issue {
 
 func TestViewsFitTerminal(t *testing.T) {
 	for _, size := range [][2]int{{60, 15}, {80, 24}, {120, 40}, {160, 50}} {
-		for tab := range 8 {
+		for tab := range 9 {
 			for _, enter := range []bool{false, true} {
 				name := fmt.Sprintf("%dx%d/tab%d/enter=%v", size[0], size[1], tab+1, enter)
 				a := New(bd.Client{Dir: t.TempDir()})
@@ -42,6 +43,9 @@ func TestViewsFitTerminal(t *testing.T) {
 					a.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 				}
 				out := a.render()
+				if head := ansi.Strip(strings.SplitN(out, "\n", 2)[0]); !strings.Contains(head, "1 ") || !strings.Contains(head, fmt.Sprint(len(a.views))) {
+					t.Errorf("%s: header lost tabs: %q", name, head)
+				}
 				if tab == 0 && !strings.Contains(out, "Active child") {
 					t.Errorf("%s: Now shows no fixture rows", name)
 				}
@@ -144,9 +148,77 @@ func TestInboxAndAlerts(t *testing.T) {
 	if pendingHuman(a.snap) != 1 {
 		t.Errorf("pending human: %d", pendingHuman(a.snap))
 	}
-	inbox := a.views[len(a.views)-1].(*inboxView)
+	inbox := a.views[a.viewIndex("Inbox")].(*inboxView)
 	inbox.HandleKey("j")
 	if is := inbox.Selected(); is == nil || is.ID != "t-a.3" {
 		t.Errorf("inbox selection: %+v", is)
+	}
+}
+
+func TestDetailLinksOpenChildrenAndGoBack(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
+	a.override, a.focusDetail = a.snap.ByID["t-a"], true
+	a.render()
+	if got := a.detail.links; len(got) < 3 {
+		t.Fatalf("epic detail links: %v", got)
+	}
+	key := func(k tea.KeyPressMsg) { a.Update(k); a.render() }
+	key(tea.KeyPressMsg{Code: tea.KeyTab})
+	first := a.detail.selectedLink()
+	key(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if a.override == nil || a.override.ID != first {
+		t.Fatalf("enter on link %q opened %+v", first, a.override)
+	}
+	key(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if a.override == nil || a.override.ID != "t-a" {
+		t.Fatalf("esc should return to the epic, got %+v", a.override)
+	}
+	key(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if a.override != nil || a.focusDetail {
+		t.Fatal("second esc should close the detail")
+	}
+}
+
+func TestBoardMovesCardsBetweenColumns(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.state.Machine = allMachines
+	a.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+	a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
+	a.active = a.viewIndex("Board")
+	b := a.views[a.active].(*kanbanView)
+	if is := b.Selected(); is == nil || is.ID != "t-a.1" {
+		t.Fatalf("board should open on the in-progress card, got %+v", is)
+	}
+	a.Update(tea.KeyPressMsg{Code: 'H', Text: "H"})
+	if got := a.snap.ByID["t-a.1"].Status; got != "blocked" {
+		t.Fatalf("H moved the card to %q, want blocked", got)
+	}
+	if b.col != 1 {
+		t.Fatalf("selection should follow the card to Blocked, col=%d", b.col)
+	}
+	if out := ansi.Strip(a.render()); !strings.Contains(out, "Blocked 2") {
+		t.Fatalf("board header counts wrong:\n%s", out)
+	}
+}
+
+func TestNowShowsLiveAgentForClaimedBead(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+	issues := fixture()
+	issues[1].Metadata = []byte(`{"claude_session.aaaa_bbbb":"w1:p1"}`)
+	a.Update(snapshotMsg{issues: issues, gen: a.gen})
+	a.Update(herdrMsg{panes: map[string]agentPane{"aaaa-bbbb": {Pane: "w1:p1", Status: "working", Title: "tm-tests", WSLabel: "infra"}}})
+	if out := ansi.Strip(a.render()); !strings.Contains(out, "▶ tm-tests") {
+		t.Fatalf("Now row lacks the live agent:\n%s", out)
+	}
+	a.Update(herdrMsg{panes: map[string]agentPane{}})
+	a.Update(sessionNamesMsg{"aaaa-bbbb": {Name: "8010"}})
+	if out := ansi.Strip(a.render()); !strings.Contains(out, "○ ended 8010") {
+		t.Fatalf("finished session not marked gone:\n%s", out)
 	}
 }

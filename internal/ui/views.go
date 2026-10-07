@@ -139,7 +139,11 @@ func (v *nowView) Rebuild(a *App) {
 			active = append(active, is)
 		}
 	}
-	v.SetRows(groupByEpic(a, active))
+	rows := groupByEpic(a, active)
+	for i := range rows {
+		rows[i].agent = true
+	}
+	v.SetRows(rows)
 }
 
 func (v *nowView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -38,42 +39,204 @@ func sessions(is *bd.Issue) []session {
 	return out
 }
 
-type paneInfo struct {
-	Workspace string `json:"workspace_id"`
-	Tab       string `json:"tab_id"`
-	Agent     string `json:"agent"`
+// agentPane is a herdr pane running an agent, keyed in herdrState by the Claude session it holds now.
+type agentPane struct {
+	Pane      string
+	Status    string // working, idle, blocked, …
+	Title     string
+	Workspace string
+	WSLabel   string
+	Tab       string
 }
 
-// livePane asks herdr whether the pane still runs an agent.
-func livePane(pane string) (paneInfo, bool) {
-	if pane == "" || pane == "none" {
-		return paneInfo{}, false
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "herdr", "pane", "get", pane).Output()
-	if err != nil {
-		return paneInfo{}, false
-	}
-	var r struct {
-		Result struct {
-			Pane paneInfo `json:"pane"`
-		} `json:"result"`
-	}
-	if json.Unmarshal(out, &r) != nil || r.Result.Pane.Agent == "" {
-		return paneInfo{}, false
-	}
-	return r.Result.Pane, true
+type herdrMsg struct {
+	panes map[string]agentPane
+	err   error
 }
 
-// transcriptCwd finds the directory a session ran in, from its transcript under ~/.claude/projects.
-func transcriptCwd(id string) string {
+// pollHerdr lists live agent panes; herdr answers in milliseconds, so this runs on every tick.
+func pollHerdr() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "herdr", "pane", "list").Output()
+		if err != nil {
+			return herdrMsg{err: err}
+		}
+		var pl struct {
+			Result struct {
+				Panes []struct {
+					ID      string `json:"pane_id"`
+					Status  string `json:"agent_status"`
+					Title   string `json:"terminal_title_stripped"`
+					WS      string `json:"workspace_id"`
+					Tab     string `json:"tab_id"`
+					Session *struct {
+						Value string `json:"value"`
+					} `json:"agent_session"`
+				} `json:"panes"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(out, &pl); err != nil {
+			return herdrMsg{err: err}
+		}
+		labels := map[string]string{}
+		if out, err := exec.CommandContext(ctx, "herdr", "workspace", "list").Output(); err == nil {
+			var wl struct {
+				Result struct {
+					Workspaces []struct {
+						ID    string `json:"workspace_id"`
+						Label string `json:"label"`
+					} `json:"workspaces"`
+				} `json:"result"`
+			}
+			if json.Unmarshal(out, &wl) == nil {
+				for _, w := range wl.Result.Workspaces {
+					labels[w.ID] = w.Label
+				}
+			}
+		}
+		panes := map[string]agentPane{}
+		for _, p := range pl.Result.Panes {
+			if p.Session != nil && p.Session.Value != "" {
+				panes[p.Session.Value] = agentPane{p.ID, p.Status, p.Title, p.WS, labels[p.WS], p.Tab}
+			}
+		}
+		return herdrMsg{panes: panes}
+	}
+}
+
+// agentOf returns the live pane of the newest session that claimed the bead, if any is still running.
+func (a *App) agentOf(is *bd.Issue) (agentPane, bool) {
+	for _, s := range sessions(is) {
+		if p, ok := a.herdr[s.id]; ok {
+			return p, true
+		}
+	}
+	return agentPane{}, false
+}
+
+// agentNote is the Now-row badge for a claimed bead: live status and pane title, or gone.
+func (a *App) agentNote(is *bd.Issue) string {
+	if len(sessions(is)) == 0 || a.herdr == nil {
+		return ""
+	}
+	p, ok := a.agentOf(is)
+	if !ok {
+		return sDim.Render("○ ended " + a.sessionLabel(a.latestSession(is)))
+	}
+	label := p.Title
+	if label == "" {
+		label = p.WSLabel
+	}
+	switch p.Status {
+	case "working":
+		return sWarn.Render("▶ " + label)
+	case "idle":
+		return sOK.Render("◦ " + label)
+	}
+	return sDim.Render("· " + label)
+}
+
+func transcriptPath(id string) string {
 	home, _ := os.UserHomeDir()
 	matches, _ := filepath.Glob(filepath.Join(home, ".claude", "projects", "*", id+".jsonl"))
 	if len(matches) == 0 {
 		return ""
 	}
-	f, err := os.Open(matches[0])
+	return matches[0]
+}
+
+// sessionInfo is what an ended session's transcript says about it.
+type sessionInfo struct {
+	Name string // the /rename title, else Claude's own title; "" when unknown
+	Last time.Time
+}
+
+type sessionNamesMsg map[string]sessionInfo
+
+// readSessionInfo scans a transcript for its latest custom or AI title; custom wins.
+// Transcripts on another machine are not here, so those come back empty.
+func readSessionInfo(id string) sessionInfo {
+	path := transcriptPath(id)
+	if path == "" {
+		return sessionInfo{}
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return sessionInfo{}
+	}
+	info := sessionInfo{Last: st.ModTime()}
+	f, err := os.Open(path)
+	if err != nil {
+		return info
+	}
+	defer f.Close()
+	var custom, ai string
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 64<<20)
+	for sc.Scan() {
+		b := sc.Bytes()
+		if !bytes.Contains(b, []byte(`-title"`)) {
+			continue
+		}
+		var t struct {
+			Type   string `json:"type"`
+			Custom string `json:"customTitle"`
+			AI     string `json:"aiTitle"`
+		}
+		if json.Unmarshal(b, &t) != nil {
+			continue
+		}
+		switch {
+		case t.Type == "custom-title" && t.Custom != "":
+			custom = t.Custom
+		case t.Type == "ai-title" && t.AI != "":
+			ai = t.AI
+		}
+	}
+	info.Name = custom
+	if info.Name == "" {
+		info.Name = ai
+	}
+	return info
+}
+
+// nameEndedSessions looks up the claimed sessions herdr no longer runs and that bt has not named yet.
+func (a *App) nameEndedSessions() tea.Cmd {
+	var ids []string
+	for _, is := range a.snap.Issues {
+		if is.Closed() {
+			continue
+		}
+		for _, s := range sessions(is) {
+			if _, live := a.herdr[s.id]; !live {
+				if _, known := a.sessionNames[s.id]; !known {
+					a.sessionNames[s.id] = sessionInfo{} // in flight; avoids a second scan
+					ids = append(ids, s.id)
+				}
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		out := sessionNamesMsg{}
+		for _, id := range ids {
+			out[id] = readSessionInfo(id)
+		}
+		return out
+	}
+}
+
+// transcriptCwd finds the directory a session ran in, from its transcript under ~/.claude/projects.
+func transcriptCwd(id string) string {
+	path := transcriptPath(id)
+	if path == "" {
+		return ""
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
@@ -98,7 +261,7 @@ func (a *App) resume(is *bd.Issue) tea.Cmd {
 	case 0:
 		return flash("no agent session recorded on " + a.shortID(is.ID))
 	case 1:
-		return resumeSession(ss[0])
+		return a.resumeSession(ss[0])
 	}
 	opts := make([]option, len(ss))
 	for i, s := range ss {
@@ -107,7 +270,7 @@ func (a *App) resume(is *bd.Issue) tea.Cmd {
 	a.modal = newPicker("Resume which session?", opts, func(id string) tea.Cmd {
 		for _, s := range ss {
 			if s.id == id {
-				return resumeSession(s)
+				return a.resumeSession(s)
 			}
 		}
 		return nil
@@ -115,20 +278,18 @@ func (a *App) resume(is *bd.Issue) tea.Cmd {
 	return nil
 }
 
-type resumeMsg struct{ s session }
-
-// resumeSession checks herdr off the UI goroutine; resumeMsg then reopens the session when no pane holds it.
-func resumeSession(s session) tea.Cmd {
+// resumeSession focuses the herdr pane running the session, or reopens it with claude --resume.
+func (a *App) resumeSession(s session) tea.Cmd {
+	p, ok := a.herdr[s.id]
+	if !ok {
+		return resumeClaude(s)
+	}
 	return func() tea.Msg {
-		p, ok := livePane(s.pane)
-		if !ok {
-			return resumeMsg{s}
-		}
 		if err := exec.Command("herdr", "workspace", "focus", p.Workspace).Run(); err != nil {
 			return flashMsg{text: "herdr: " + err.Error(), err: true}
 		}
 		_ = exec.Command("herdr", "tab", "focus", p.Tab).Run()
-		return flashMsg{text: "focused herdr pane " + s.pane}
+		return flashMsg{text: "focused " + p.WSLabel + " / " + p.Title}
 	}
 }
 
@@ -186,4 +347,24 @@ func (a *App) alertEvents(old *bd.Snapshot) []string {
 		}
 	}
 	return events
+}
+
+// sessionLabel names a session by its title, falling back to the short id.
+func (a *App) sessionLabel(id string) string {
+	if n := a.sessionNames[id].Name; n != "" {
+		return n
+	}
+	return id[:min(8, len(id))]
+}
+
+// latestSession is the claiming session with the most recent transcript activity.
+func (a *App) latestSession(is *bd.Issue) string {
+	ss := sessions(is)
+	best := ss[0].id
+	for _, s := range ss[1:] {
+		if a.sessionNames[s.id].Last.After(a.sessionNames[best].Last) {
+			best = s.id
+		}
+	}
+	return best
 }
