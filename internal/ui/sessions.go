@@ -332,13 +332,13 @@ func (a *App) alertEvents(old *bd.Snapshot) []string {
 	for _, is := range a.snap.Issues {
 		prev := old.ByID[is.ID]
 		if prev == nil {
-			if isHuman(is) && !is.Closed() {
+			if isHuman(is) && !is.Closed() && a.humanVisible(is) {
 				events = append(events, "needs you: "+a.shortID(is.ID))
 			}
 			continue
 		}
 		switch {
-		case isHuman(is) && !is.Closed() && !isHuman(prev):
+		case isHuman(is) && !is.Closed() && !isHuman(prev) && a.humanVisible(is):
 			events = append(events, "needs you: "+a.shortID(is.ID))
 		case prev.Status == "in_progress" && is.Closed() && a.machineMatch(is):
 			events = append(events, "closed: "+a.shortID(is.ID))

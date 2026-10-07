@@ -138,17 +138,21 @@ func TestInboxAndAlerts(t *testing.T) {
 	a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
 	old := a.snap
 	next := fixture()
-	next[3].Labels = []string{"human"}                              // t-a.3 flagged for the user
+	next[3].Labels = []string{"human", "machine:u-host"}            // t-a.3 flagged for the user, on this machine
+	next[2].Labels = []string{"human", "machine:other"}             // t-a.2 flagged on another machine
 	next[1].Status, next[1].ClosedAt = "closed", &next[1].UpdatedAt // in-progress t-a.1 closed
 	a.setSnapshot(bd.NewSnapshot(next))
 	ev := strings.Join(a.alertEvents(old), ",")
 	if !strings.Contains(ev, "needs you: a.3") || !strings.Contains(ev, "closed: a.1") {
 		t.Errorf("alerts: %q", ev)
 	}
-	if pendingHuman(a.snap) != 1 {
-		t.Errorf("pending human: %d", pendingHuman(a.snap))
+	if a.pendingHuman() != 1 {
+		t.Errorf("pending human: %d", a.pendingHuman())
 	}
 	inbox := a.views[a.viewIndex("Inbox")].(*inboxView)
+	if strings.Contains(ev, "a.2") {
+		t.Errorf("alert for another machine's human bead: %q", ev)
+	}
 	inbox.HandleKey("j")
 	if is := inbox.Selected(); is == nil || is.ID != "t-a.3" {
 		t.Errorf("inbox selection: %+v", is)
@@ -220,5 +224,37 @@ func TestNowShowsLiveAgentForClaimedBead(t *testing.T) {
 	a.Update(sessionNamesMsg{"aaaa-bbbb": {Name: "8010"}})
 	if out := ansi.Strip(a.render()); !strings.Contains(out, "○ ended 8010") {
 		t.Fatalf("finished session not marked gone:\n%s", out)
+	}
+}
+
+func TestInboxFollowsMachineFilter(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	issues := fixture()
+	issues[3].Labels = []string{"human", "machine:u-host"}
+	issues[2].Labels = []string{"human", "machine:other"}
+	a.Update(snapshotMsg{issues: issues, gen: a.gen})
+	count := func() int {
+		n := 0
+		for _, r := range a.views[a.viewIndex("Inbox")].(*inboxView).rows {
+			if r.issue != nil && !r.isHeader() {
+				n++
+			}
+		}
+		return n
+	}
+	if count() != 1 || a.pendingHuman() != 1 {
+		t.Fatalf("this machine: rows %d, badge %d, want 1", count(), a.pendingHuman())
+	}
+	a.state.Machine = allMachines
+	a.rebuild()
+	if count() != 2 || a.pendingHuman() != 2 {
+		t.Fatalf("all machines: rows %d, badge %d, want 2", count(), a.pendingHuman())
+	}
+	issues[1].Labels = []string{"human"} // flagged without a machine: nobody's, so everyone's
+	a.state.Machine = ""
+	a.Update(snapshotMsg{issues: issues, gen: a.gen})
+	if count() != 2 {
+		t.Fatalf("unlabelled human bead hidden under this-machine filter: rows %d", count())
 	}
 }

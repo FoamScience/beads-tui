@@ -383,10 +383,17 @@ func (v *triageView) Hints() []string { return []string{"[/] rule", "m machine",
 // human beads are ones an agent flagged for the user with the "human" label (bd human list).
 func isHuman(is *bd.Issue) bool { return is.HasLabel("human") }
 
-func pendingHuman(s *bd.Snapshot) int {
+// humanVisible applies the machine filter to human beads, except that one with no machine label
+// belongs to nobody and shows everywhere; hiding it would leave the request unseen.
+func (a *App) humanVisible(is *bd.Issue) bool {
+	return a.machineMatch(is) || is.LabelWithPrefix("machine:") == ""
+}
+
+// pendingHuman counts open human beads under the shared machine filter, like the Inbox shows them.
+func (a *App) pendingHuman() int {
 	n := 0
-	for _, is := range s.Issues {
-		if isHuman(is) && !is.Closed() {
+	for _, is := range a.snap.Issues {
+		if isHuman(is) && !is.Closed() && a.humanVisible(is) {
 			n++
 		}
 	}
@@ -405,7 +412,7 @@ func (v *inboxView) Name() string { return "Inbox" }
 func (v *inboxView) Rebuild(a *App) {
 	var list []*bd.Issue
 	for _, is := range a.snap.Issues {
-		if isHuman(is) && (v.showClosed || !is.Closed()) {
+		if isHuman(is) && (v.showClosed || !is.Closed()) && a.humanVisible(is) {
 			list = append(list, is)
 		}
 	}
@@ -415,6 +422,9 @@ func (v *inboxView) Rebuild(a *App) {
 func (v *inboxView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 	is := v.Selected()
 	switch k.String() {
+	case "M":
+		a.modal = machinePicker(a)
+		return true, nil
 	case "H":
 		v.showClosed = !v.showClosed
 		v.Rebuild(a)
@@ -445,4 +455,19 @@ func (v *inboxView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 	return v.HandleKey(k.String()), nil
 }
 
-func (v *inboxView) Hints() []string { return []string{"r respond", "X dismiss", "H handled"} }
+func (v *inboxView) Render(a *App, w, h int) string {
+	n := 0
+	for _, r := range v.rows {
+		if r.issue != nil && !r.isHeader() {
+			n++
+		}
+	}
+	what := "waiting on you"
+	if v.showClosed {
+		what = "incl. handled"
+	}
+	bar := fmt.Sprintf(" %s %s   %s", sDim.Render("machine"), machineHint(a), sDim.Render(fmt.Sprintf("%d %s", n, what)))
+	return ansi.Truncate(bar, w, "…") + "\n\n" + v.listView.Render(a, w, h-2)
+}
+
+func (v *inboxView) Hints() []string { return []string{"r respond", "X dismiss", "M machine", "H handled"} }
