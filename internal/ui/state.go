@@ -14,6 +14,7 @@ type state struct {
 	NowStatuses []string `json:"now_statuses"`
 	Machine     string   `json:"machine"` // Now/Ready filter: "" this host, "all", or a machine label value
 	ReadyFilter string   `json:"ready_filter"`
+	BoardEpic   string   `json:"board_epic"` // Board scope; "" shows every epic
 }
 
 func statePath() string {

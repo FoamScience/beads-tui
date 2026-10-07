@@ -52,6 +52,7 @@ Five views, one shared detail pane. Number keys switch views.
 | `6` | **Graph**: dependency DAG of an epic or issue, navigable | `bd graph`, `bd dep`, `bd blocked` |
 | `7` | **Molecules**: formulas, protos, live molecules and wisps | `bd formula`, `bd cook`, `bd mol pour/wisp/progress/squash/burn` |
 | `8` / `i` | **Inbox**: beads an agent labelled `human`, pending first; `r` responds (comment + close), `X` dismisses; the header shows the pending count | `bd human list/respond/dismiss` |
+| `9` / `b` | **Board**: kanban lanes Ready, Blocked, In progress, Deferred, Done (last 7 days), non-epic issues only; `h/l` columns, `j/k` cards, `H/L` move the card (or the marked cards) to the next lane, which sets its status; `E` scopes the board to one epic | `bd update --status`, close flow for Done |
 
 `/` searches everywhere (title, id, labels). `Enter` opens detail. `g` on any row opens Graph rooted at its epic. `?` shows all keys.
 
@@ -80,6 +81,7 @@ Five views, one shared detail pane. Number keys switch views.
 ```
 
 - Columns: id (prefix trimmed), priority, type only when not `task`, title, machine, age since last update, estimate. Age turns amber past a threshold (stale agent).
+- Claimed beads show their agent instead of the machine: bt polls `herdr pane list` every 3 s and matches each pane's live Claude session against the `claude_session.*` metadata the herdr-bd-sessions hook writes on `--claim` or `--status in_progress`. `▶ title` means working, `◦ title` idle, `○ gone` that the session has ended. Board cards and the detail pane show the same, and `R` jumps to that pane.
 - Rows changed since the last refresh flash once, then show a dim dot for a minute. This answers "what are the agents doing" without leaving the view.
 - Filter chips are the status set the history shows being edited by hand; `f` toggles them, the choice persists.
 
@@ -100,7 +102,7 @@ Five views, one shared detail pane. Number keys switch views.
   Refs   src/witness.lean  WitnessReduce.reduce  :142        o open
 ```
 
-Sections collapse with `Z`. Notes come newest first, since that is where agents leave their reasoning. Under the labels, a blocked issue shows its blocker chain (`waits on x.5 → x.3`), followed from its own blockers and then its ancestors' down to the first one that is free to move; list rows show the last link as `⊘ x.3`. A `time` line compares elapsed time (started to closed, wall clock) with the estimate, and parents roll this up over their closed descendants. An `Agent sessions` section lists the Claude sessions the herdr-bd-sessions hook recorded when an agent claimed the bead.
+Children, dependencies and dependents listed in the pane are links: `tab`/`shift+tab` move a cursor over them, `enter` opens one in the same pane, and `esc` walks back through the issues opened this way before closing the pane. Sections collapse with `Z`. Notes come newest first, since that is where agents leave their reasoning. Under the labels, a blocked issue shows its blocker chain (`waits on x.5 → x.3`), followed from its own blockers and then its ancestors' down to the first one that is free to move; list rows show the last link as `⊘ x.3`. A `time` line compares elapsed time (started to closed, wall clock) with the estimate, and parents roll this up over their closed descendants. An `Agent sessions` section lists the Claude sessions the herdr-bd-sessions hook recorded when an agent claimed the bead.
 
 ### 3 Epics
 
@@ -183,7 +185,7 @@ Three panes: formulas (from all `bd formula list` search paths), live molecules 
 - **Distill:** `d` on an epic runs `bd mol distill` to turn ad-hoc work into a formula, then opens it for editing.
 - **Pour / wisp:** `p` / `w` opens a form with one field per declared variable (defaults filled in), shows the `--dry-run` result, then creates it. Afterwards the same form sets the new root's parent, title and labels. `local-e2e.formula.toml` documents these three follow-up commands as a manual step that leaves a stray root when skipped, so the TUI does them as part of the pour.
 - **Lifecycle:** `Q` squash, `B` burn (confirm, irreversible), plus `bd mol stale` results flagged in the list. `S` stays the global sync key.
-- **Preview:** a formula shows its vars and a step DAG drawn with the Graph renderer (shared title prefix such as `local-e2e {{change}}: ` is trimmed); `h/l` walks the steps. A molecule or wisp shows its live graph.
+- **Preview:** a formula shows its vars and a step DAG drawn with the Graph renderer (shared title prefix such as `local-e2e {{change}}: ` is trimmed); `h/l` moves between layers and `J/K` within a layer (`j/k` stay on the list). A molecule or wisp shows its live graph.
 
 ## Out of scope for v1
 

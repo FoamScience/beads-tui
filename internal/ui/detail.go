@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,11 +33,17 @@ type detail struct {
 	md        *glamour.TermRenderer
 	mdWidth   int
 	dark      bool
+
+	// links are the issues listed in the pane (children, deps), in screen order; tab walks them.
+	cand      []string // issue ids in build order, addressed by the markers left in the text
+	links     []string
+	linkLines []int
+	linkSel   int // index into links, -1 for none
 }
 
 func newDetail() *detail {
 	vp := viewport.New()
-	return &detail{vp: vp, comments: map[string][]bd.Comment{}, collapsed: map[string]bool{}, dark: true}
+	return &detail{vp: vp, comments: map[string][]bd.Comment{}, collapsed: map[string]bool{}, dark: true, linkSel: -1}
 }
 
 func (d *detail) loadComments(a *App, is *bd.Issue) tea.Cmd {
@@ -80,14 +87,17 @@ func (d *detail) render(a *App, is *bd.Issue, w, h int) string {
 	d.vp.SetWidth(w)
 	d.vp.SetHeight(h)
 	cs, fetched := d.comments[is.ID]
-	key := fmt.Sprintf("%s|%s|%s|%d|%s|%d|%d|%d|%v|%v|%v|%v", is.ID, is.UpdatedAt, is.Status, is.Priority, is.ExternalRef, is.EstimatedMinutes,
-		w, len(cs), fetched && cs != nil, a.snap.Loaded, d.collapsed, d.dark)
+	if is.ID != d.id {
+		d.linkSel = -1
+	}
+	key := fmt.Sprintf("%s|%s|%s|%d|%s|%d|%d|%d|%v|%v|%v|%v|%d", is.ID, is.UpdatedAt, is.Status, is.Priority, is.ExternalRef, is.EstimatedMinutes,
+		w, len(cs), fetched && cs != nil, a.snap.Loaded, d.collapsed, d.dark, d.linkSel)
 	if key != d.key {
 		if is.ID != d.id {
 			d.vp.GotoTop()
 		}
 		d.id, d.key = is.ID, key
-		d.vp.SetContent(d.content(a, is, w))
+		d.vp.SetContent(d.resolveLinks(d.content(a, is, w)))
 	}
 	return d.vp.View()
 }
@@ -95,6 +105,7 @@ func (d *detail) render(a *App, is *bd.Issue, w, h int) string {
 var detailSections = []string{"description", "design", "acceptance", "notes", "comments", "deps", "children", "refs", "sessions"}
 
 func (d *detail) content(a *App, is *bd.Issue, w int) string {
+	d.cand = d.cand[:0]
 	s := a.snap
 	var b strings.Builder
 	line := func(parts ...string) { b.WriteString(" " + strings.Join(parts, "  ") + "\n") }
@@ -172,7 +183,7 @@ func (d *detail) content(a *App, is *bd.Issue, w int) string {
 	section("deps", "Dependencies", d.deps(a, is, w))
 	section("children", "Children", d.children(a, is, w))
 	section("refs", "Refs", refsBody(is))
-	section("sessions", "Agent sessions", sessionsBody(is))
+	section("sessions", "Agent sessions", sessionsBody(a, is))
 	return b.String()
 }
 
@@ -229,7 +240,7 @@ func (d *detail) deps(a *App, is *bd.Issue, w int) string {
 		if t != nil {
 			title, g = t.Title, glyph(s, t)
 		}
-		l := fmt.Sprintf(" %-16s %s %s %s", sDim.Render(kind), g, a.shortID(id), title)
+		l := fmt.Sprintf("%s%-16s %s %s %s", d.mark(id), sDim.Render(kind), g, a.shortID(id), title)
 		b.WriteString(ansi.Truncate(l, w, "…") + "\n")
 	}
 	for _, dep := range is.Dependencies {
@@ -246,7 +257,7 @@ func (d *detail) deps(a *App, is *bd.Issue, w int) string {
 func (d *detail) children(a *App, is *bd.Issue, w int) string {
 	var b strings.Builder
 	for _, c := range a.snap.Children[is.ID] {
-		l := fmt.Sprintf(" %s %s %s %s", glyph(a.snap, c), a.shortID(c.ID), prio(c.Priority), c.Title)
+		l := fmt.Sprintf("%s%s %s %s %s", d.mark(c.ID), glyph(a.snap, c), a.shortID(c.ID), prio(c.Priority), c.Title)
 		b.WriteString(ansi.Truncate(l, w, "…") + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
@@ -329,13 +340,82 @@ func timeVsEstimate(s *bd.Snapshot, is *bd.Issue) string {
 	return fmt.Sprintf("%d closed with estimates: elapsed %s vs est %s (%.1f×)", n, minutes(el), minutes(est), float64(el)/float64(est))
 }
 
-func sessionsBody(is *bd.Issue) string {
+func sessionsBody(a *App, is *bd.Issue) string {
 	var b strings.Builder
 	for _, ss := range sessions(is) {
-		fmt.Fprintf(&b, " %s  %s\n", ss.id, sDim.Render("pane "+ss.pane))
+		where := sDim.Render("claimed it, no longer running (was pane " + ss.pane + ")")
+		if info := a.sessionNames[ss.id]; info.Name != "" || !info.Last.IsZero() {
+			where = fmt.Sprintf("%q %s", info.Name, where)
+			if !info.Last.IsZero() {
+				where += sDim.Render(", last active " + info.Last.Format("2006-01-02 15:04"))
+			}
+		}
+		if p, ok := a.herdr[ss.id]; ok {
+			where = p.Status + "  " + p.WSLabel + " / " + p.Title + sDim.Render("  pane "+p.Pane)
+		}
+		fmt.Fprintf(&b, " %s  %s\n", ss.id[:min(8, len(ss.id))], where)
 	}
 	if b.Len() > 0 {
 		b.WriteString(sDim.Render(" R resumes it, or focuses the pane if it is still open"))
 	}
 	return b.String()
+}
+
+// Link placeholders are private-use runes, one cell wide like the cursor that replaces them,
+// so truncation measures link rows the same as any other row.
+const linkBase = 0xF0000
+
+var linkMarker = regexp.MustCompile("[\U000F0000-\U000FFFFD]")
+
+// mark leaves a one-cell placeholder that resolveLinks turns into the link cursor or a space.
+func (d *detail) mark(id string) string {
+	d.cand = append(d.cand, id)
+	return string(rune(linkBase + len(d.cand) - 1))
+}
+
+// resolveLinks records which links made it on screen (collapsed sections drop theirs) and draws the cursor.
+func (d *detail) resolveLinks(content string) string {
+	d.links, d.linkLines = d.links[:0], d.linkLines[:0]
+	lines := strings.Split(content, "\n")
+	for i, l := range lines {
+		lines[i] = linkMarker.ReplaceAllStringFunc(l, func(m string) string {
+			n := int([]rune(m)[0]) - linkBase
+			d.links = append(d.links, d.cand[n])
+			d.linkLines = append(d.linkLines, i)
+			if len(d.links)-1 == d.linkSel {
+				return sAccent.Render("▸")
+			}
+			return " "
+		})
+	}
+	if d.linkSel >= len(d.links) {
+		d.linkSel = -1
+	}
+	return strings.Join(lines, "\n")
+}
+
+// moveLink steps the link cursor and scrolls it into view.
+func (d *detail) moveLink(step int) {
+	if len(d.links) == 0 {
+		return
+	}
+	switch {
+	case d.linkSel < 0 && step < 0:
+		d.linkSel = len(d.links) - 1
+	case d.linkSel < 0:
+		d.linkSel = 0
+	default:
+		d.linkSel = (d.linkSel + step + len(d.links)) % len(d.links)
+	}
+	line := d.linkLines[d.linkSel]
+	if line < d.vp.YOffset() || line >= d.vp.YOffset()+d.vp.Height() {
+		d.vp.SetYOffset(max(line-d.vp.Height()/3, 0))
+	}
+}
+
+func (d *detail) selectedLink() string {
+	if d.linkSel < 0 || d.linkSel >= len(d.links) {
+		return ""
+	}
+	return d.links[d.linkSel]
 }
