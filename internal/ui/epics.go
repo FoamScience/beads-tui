@@ -57,10 +57,7 @@ func (v *epicsView) Rebuild(a *App) {
 		}
 	}
 	byPriority(roots)
-	for i, r := range roots {
-		if i > 0 {
-			rows = append(rows, row{spacer: true})
-		}
+	for _, r := range roots {
 		walk(r, 0)
 	}
 	v.SetRows(rows)
