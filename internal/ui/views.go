@@ -16,11 +16,20 @@ import (
 type listView struct {
 	issueList
 	empty string
+	bar   bool // draw the machine filter line above the list
 }
 
 func (v *listView) Selected() *bd.Issue { return v.issueList.Selected() }
 
 func (v *listView) Render(a *App, w, h int) string {
+	if v.bar {
+		bar := ansi.Truncate(fmt.Sprintf(" %s %s", sDim.Render("machine"), machineHint(a)), w, "…")
+		return bar + "\n\n" + v.body(a, w, h-2)
+	}
+	return v.body(a, w, h)
+}
+
+func (v *listView) body(a *App, w, h int) string {
 	if a.loading && len(a.snap.Issues) == 0 {
 		return sDim.Render("\n  loading issues…")
 	}
@@ -107,9 +116,12 @@ func (a *App) machineFilter() string {
 	return a.state.Machine
 }
 
+// machineMatch is the one machine filter every tab applies: beads labelled for the selected
+// machine, plus beads with no machine label, which belong to nobody and so show everywhere.
 func (a *App) machineMatch(is *bd.Issue) bool {
 	f := a.machineFilter()
-	return f == allMachines || is.LabelWithPrefix("machine:") == f
+	m := is.LabelWithPrefix("machine:")
+	return f == allMachines || m == f || m == ""
 }
 
 func machineHint(a *App) string {
@@ -160,9 +172,6 @@ func (v *nowView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 			v.Rebuild(a)
 			return saveState(a)
 		})
-		return true, nil
-	case "M":
-		a.modal = machinePicker(a)
 		return true, nil
 	}
 	return v.HandleKey(k.String()), nil
@@ -266,9 +275,6 @@ func (v *readyView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 			return saveState(a)
 		})
 		return true, nil
-	case "M":
-		a.modal = machinePicker(a)
-		return true, nil
 	}
 	return v.HandleKey(k.String()), nil
 }
@@ -294,12 +300,17 @@ func (v *readyView) Hints() []string { return []string{"f filter", "M machine", 
 
 type activityView struct{ listView }
 
-func newActivity() *activityView { return &activityView{listView{empty: "no activity"}} }
+func newActivity() *activityView { return &activityView{listView{empty: "no activity", bar: true}} }
 
 func (v *activityView) Name() string { return "Activity" }
 
 func (v *activityView) Rebuild(a *App) {
-	list := slices.Clone(a.snap.Issues)
+	var list []*bd.Issue
+	for _, is := range a.snap.Issues {
+		if a.machineMatch(is) {
+			list = append(list, is)
+		}
+	}
 	sort.Slice(list, func(i, j int) bool { return list[i].UpdatedAt.After(list[j].UpdatedAt) })
 	list = list[:min(len(list), 300)]
 	var rows []row
@@ -347,13 +358,14 @@ func (v *activityView) Hints() []string { return []string{"[/] day"} }
 
 type triageView struct{ listView }
 
-func newTriage() *triageView { return &triageView{listView{empty: "all clean"}} }
+func newTriage() *triageView { return &triageView{listView{empty: "all clean", bar: true}} }
 
 func (v *triageView) Name() string { return "Triage" }
 
 func (v *triageView) Rebuild(a *App) {
 	var rows []row
 	for _, r := range a.snap.Triage() {
+		r.Issues = slices.DeleteFunc(r.Issues, func(is *bd.Issue) bool { return !a.machineMatch(is) })
 		if len(r.Issues) == 0 {
 			continue
 		}
@@ -383,17 +395,11 @@ func (v *triageView) Hints() []string { return []string{"[/] rule", "m machine",
 // human beads are ones an agent flagged for the user with the "human" label (bd human list).
 func isHuman(is *bd.Issue) bool { return is.HasLabel("human") }
 
-// humanVisible applies the machine filter to human beads, except that one with no machine label
-// belongs to nobody and shows everywhere; hiding it would leave the request unseen.
-func (a *App) humanVisible(is *bd.Issue) bool {
-	return a.machineMatch(is) || is.LabelWithPrefix("machine:") == ""
-}
-
 // pendingHuman counts open human beads under the shared machine filter, like the Inbox shows them.
 func (a *App) pendingHuman() int {
 	n := 0
 	for _, is := range a.snap.Issues {
-		if isHuman(is) && !is.Closed() && a.humanVisible(is) {
+		if isHuman(is) && !is.Closed() && a.machineMatch(is) {
 			n++
 		}
 	}
@@ -412,7 +418,7 @@ func (v *inboxView) Name() string { return "Inbox" }
 func (v *inboxView) Rebuild(a *App) {
 	var list []*bd.Issue
 	for _, is := range a.snap.Issues {
-		if isHuman(is) && (v.showClosed || !is.Closed()) && a.humanVisible(is) {
+		if isHuman(is) && (v.showClosed || !is.Closed()) && a.machineMatch(is) {
 			list = append(list, is)
 		}
 	}
@@ -422,9 +428,6 @@ func (v *inboxView) Rebuild(a *App) {
 func (v *inboxView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 	is := v.Selected()
 	switch k.String() {
-	case "M":
-		a.modal = machinePicker(a)
-		return true, nil
 	case "H":
 		v.showClosed = !v.showClosed
 		v.Rebuild(a)
@@ -470,4 +473,6 @@ func (v *inboxView) Render(a *App, w, h int) string {
 	return ansi.Truncate(bar, w, "…") + "\n\n" + v.listView.Render(a, w, h-2)
 }
 
-func (v *inboxView) Hints() []string { return []string{"r respond", "X dismiss", "M machine", "H handled"} }
+func (v *inboxView) Hints() []string {
+	return []string{"r respond", "X dismiss", "M machine", "H handled"}
+}

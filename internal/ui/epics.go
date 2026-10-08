@@ -23,7 +23,7 @@ type epicsView struct {
 
 func newEpics() *epicsView {
 	return &epicsView{
-		listView: listView{empty: "no epics", issueList: issueList{noteW: 15}},
+		listView: listView{empty: "no epics", bar: true, issueList: issueList{noteW: 15}},
 		expanded: map[string]bool{},
 		lint:     map[string]lintMsg{},
 	}
@@ -37,6 +37,9 @@ func (v *epicsView) Rebuild(a *App) {
 	walk = func(is *bd.Issue, depth int) {
 		rows = append(rows, row{issue: is, indent: depth, note: v.note(a, is)})
 		for _, c := range a.snap.Children[is.ID] {
+			if !a.machineMatch(c) {
+				continue
+			}
 			if c.IssueType == "epic" && (v.showClosed || !c.Closed()) {
 				walk(c, depth+1)
 			} else if v.expanded[is.ID] && c.IssueType != "epic" && (v.showClosed || !c.Closed()) {
@@ -46,7 +49,7 @@ func (v *epicsView) Rebuild(a *App) {
 	}
 	var roots []*bd.Issue
 	for _, is := range a.snap.Issues {
-		if is.IssueType != "epic" || (!v.showClosed && is.Closed()) {
+		if is.IssueType != "epic" || (!v.showClosed && is.Closed()) || !a.machineMatch(is) {
 			continue
 		}
 		if p := a.snap.Epic(is); p == nil || (!v.showClosed && p.Closed()) {

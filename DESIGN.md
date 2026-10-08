@@ -38,6 +38,10 @@ Sources: atuin shell history (58 `bd` commands), Claude transcripts under `~/.cl
 4. ratchet.nvim is not considered; the TUI stands on its own and opens `metadata.refs` in `$EDITOR`.
 5. Current host is known (`hostname`), so "my machine" filters work without config.
 
+## Machine filter
+
+One filter, chosen with `M` from any list tab and remembered, applies to Now, Ready, Epics, Triage, Activity, Inbox and Board: beads labelled for the selected machine (this one by default, or any `machine:` host, or all), plus beads with no machine label, which belong to nobody and so show everywhere. Graph keeps the whole dependency graph so no edge loses an end; search, Molecules and `bt triage --json` stay global.
+
 ## Information architecture
 
 Five views, one shared detail pane. Number keys switch views.

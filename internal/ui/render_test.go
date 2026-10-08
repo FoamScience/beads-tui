@@ -258,3 +258,75 @@ func TestInboxFollowsMachineFilter(t *testing.T) {
 		t.Fatalf("unlabelled human bead hidden under this-machine filter: rows %d", count())
 	}
 }
+
+func TestEveryTabFollowsMachineFilter(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	issues := fixture()
+	issues = append(issues,
+		bd.Issue{ID: "t-o", Title: "Other machine epic", IssueType: "epic", Status: "open", Labels: []string{"machine:other"}, UpdatedAt: time.Now()},
+		bd.Issue{ID: "t-o.1", Parent: "t-o", Title: "Other machine task", IssueType: "task", Status: "in_progress", Labels: []string{"machine:other"}, UpdatedAt: time.Now().Add(-100 * time.Hour)},
+	)
+	a.Update(snapshotMsg{issues: issues, gen: a.gen})
+	for _, name := range []string{"Now", "Ready", "Epics", "Triage", "Activity", "Inbox", "Board"} {
+		v := a.views[a.viewIndex(name)]
+		var ids []string
+		if k, ok := v.(*kanbanView); ok {
+			for _, col := range k.cards {
+				for _, is := range col {
+					ids = append(ids, is.ID)
+				}
+			}
+		} else {
+			for _, r := range rowsOf(v) {
+				if r.issue != nil {
+					ids = append(ids, r.issue.ID)
+				}
+			}
+		}
+		for _, id := range ids {
+			if strings.HasPrefix(id, "t-o") {
+				t.Errorf("%s shows %s from another machine", name, id)
+			}
+		}
+	}
+	// unlabelled beads (the whole fixture except t-a.1) still show, e.g. in Activity
+	found := false
+	for _, r := range rowsOf(a.views[a.viewIndex("Activity")]) {
+		if r.issue != nil && r.issue.ID == "t-a.3" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("unlabelled bead missing from Activity")
+	}
+	a.state.Machine = allMachines
+	a.rebuild()
+	found = false
+	for _, r := range rowsOf(a.views[a.viewIndex("Triage")]) {
+		if r.issue != nil && r.issue.ID == "t-o.1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("all machines: Triage should list the other machine's stale task")
+	}
+}
+
+func rowsOf(v View) []row {
+	switch x := v.(type) {
+	case *nowView:
+		return x.rows
+	case *readyView:
+		return x.rows
+	case *epicsView:
+		return x.rows
+	case *triageView:
+		return x.rows
+	case *activityView:
+		return x.rows
+	case *inboxView:
+		return x.rows
+	}
+	return nil
+}
