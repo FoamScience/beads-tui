@@ -424,6 +424,13 @@ func (a *App) key(msg tea.KeyPressMsg) tea.Cmd {
 	case "esc":
 		a.marks = map[string]bool{}
 		return nil
+	case "M":
+		switch a.views[a.active].(type) {
+		case *graphView, *moleculesView:
+			return nil
+		}
+		a.modal = machinePicker(a)
+		return nil
 	case "tab":
 		return a.switchTo(a.active + 1)
 	case "shift+tab":
