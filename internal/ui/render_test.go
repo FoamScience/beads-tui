@@ -391,3 +391,25 @@ func TestLedgerLogRendersInlineMarkdown(t *testing.T) {
 		t.Errorf("raw markdown left in the ledger:\n%s", out)
 	}
 }
+
+func TestDetailCountsApplyToTheNextMotionOnly(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
+	a.override, a.focusDetail = a.snap.ByID["t-a"], true
+	a.render()
+	press := func(ks ...string) {
+		for _, k := range ks {
+			a.Update(tea.KeyPressMsg{Code: rune(k[0]), Text: k})
+		}
+	}
+	press("5", "g", "g")
+	if a.detail.pg.row != 4 {
+		t.Fatalf("5gg should land on line 5, row %d", a.detail.pg.row)
+	}
+	press("g", "g", "3", "Z", "j")
+	if a.detail.pg.row != 1 {
+		t.Fatalf("a count before a non-motion key must not carry over, row %d", a.detail.pg.row)
+	}
+}

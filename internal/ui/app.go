@@ -350,8 +350,11 @@ func (a *App) key(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	if a.focusDetail || a.detailOpen || a.override != nil {
+		if pg := &a.detail.pg; pg.count != "" && pg.pending == "" && k != "g" && k != "z" && !(len(k) == 1 && k[0] >= '0' && k[0] <= '9') {
+			defer func() { pg.count = "" }() // a count only applies to the motion right after it
+		}
 		switch k {
-		case "esc", "q", "h", "left":
+		case "esc", "q":
 			if n := len(a.history); n > 0 {
 				prev := a.history[n-1]
 				a.history = a.history[:n-1]
@@ -377,18 +380,25 @@ func (a *App) key(msg tea.KeyPressMsg) tea.Cmd {
 				return a.detail.loadComments(a, t)
 			}
 			return nil
-		case "j", "down", "k", "up", "ctrl+d", "ctrl+u", "pgdown", "pgup", "space":
-			a.scrollDetail(k)
-			return nil
-		case "home":
-			a.detail.vp.GotoTop()
-			return nil
-		case "end":
-			a.detail.vp.GotoBottom()
-			return nil
 		case "Z":
 			a.toggleCollapse()
 			return nil
+		case "/":
+			a.modal = newPrompt("Search in "+a.shortID(a.selected().ID), a.detail.pg.search, func(q string) tea.Cmd {
+				if q != "" && !a.detail.pg.Search(q) {
+					return flash("no match for " + q)
+				}
+				return nil
+			})
+			return nil
+		}
+		if a.detail.pg.Key(k) {
+			a.detail.linkSel = -1
+			return nil
+		}
+		// actions whose keys are vim motions here: i note, t label, = estimate
+		if alt, ok := map[string]string{"i": "n", "t": "l", "=": "e"}[k]; ok {
+			k = alt
 		}
 		if cmd, ok := a.action(k); ok {
 			return cmd
@@ -478,20 +488,6 @@ func (a *App) switchTo(i int) tea.Cmd {
 	return cmd
 }
 
-func (a *App) scrollDetail(k string) {
-	vp := &a.detail.vp
-	switch k {
-	case "j", "down":
-		vp.ScrollDown(1)
-	case "k", "up":
-		vp.ScrollUp(1)
-	case "ctrl+d", "pgdown", "space":
-		vp.HalfPageDown()
-	case "ctrl+u", "pgup":
-		vp.HalfPageUp()
-	}
-}
-
 func (a *App) toggleCollapse() {
 	all := !a.detail.collapsed["description"]
 	for _, s := range []string{"description", "design", "acceptance"} {
@@ -532,6 +528,7 @@ func (a *App) render() string {
 			sWarn.Render(fmt.Sprintf("bt needs at least %dx%d (now %dx%d)", minW, minH, a.w, a.h)))
 	}
 	bodyH := a.h - 4
+	a.detail.pg.focused = a.focusDetail || a.detailOpen || a.override != nil
 	var body string
 	v := a.views[a.active]
 	switch {
@@ -626,7 +623,7 @@ func (a *App) footer() string {
 		hints = append(hints, fmt.Sprintf("%d marked", len(a.marks)), "space toggle", "esc clear")
 	}
 	if a.focusDetail || a.detailOpen || a.override != nil {
-		hints = append(hints, "tab links", "enter open", "j/k scroll", "Z fold", "o open ref", "R resume", "s status", "n note", "c close", "esc back")
+		hints = append(hints, "hjkl wbe {} gg G move", "/ n N search", "tab links", "enter open", "i note", "t label", "= est", "s status", "c close", "esc back")
 	} else {
 		hints = append(hints, "enter detail")
 		hints = append(hints, a.views[a.active].Hints()...)

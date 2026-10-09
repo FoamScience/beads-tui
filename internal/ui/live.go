@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/FoamScience/beads-tui/internal/bd"
@@ -19,7 +18,8 @@ import (
 type liveView struct {
 	ledgers []*bd.Issue
 	cursor  int
-	vp      viewport.Model
+	pg      pager
+	focus   bool   // keys go to the ledger pane (vim motions) instead of the list
 	key     string // what the pane was last rendered for
 }
 
@@ -28,7 +28,7 @@ type ledgerEditMsg struct {
 	err              error
 }
 
-func newLive() *liveView { return &liveView{vp: viewport.New()} }
+func newLive() *liveView { return &liveView{} }
 
 func (v *liveView) Name() string { return "Live" }
 
@@ -63,19 +63,41 @@ func (v *liveView) Selected() *bd.Issue {
 
 func (v *liveView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 	is := v.Selected()
+	if v.focus {
+		switch k.String() {
+		case "esc", "q", "tab":
+			v.focus = false
+			return true, nil
+		case "/":
+			a.modal = newPrompt("Search in ledger", v.pg.search, func(q string) tea.Cmd {
+				if q != "" && !v.pg.Search(q) {
+					return flash("no match for " + q)
+				}
+				return nil
+			})
+			return true, nil
+		}
+		if v.pg.Key(k.String()) {
+			return true, nil
+		}
+	}
 	switch k.String() {
+	case "tab", "enter":
+		if is != nil {
+			v.focus = true
+		}
 	case "j", "down":
 		v.cursor = min(v.cursor+1, max(len(v.ledgers)-1, 0))
 	case "k", "up":
 		v.cursor = max(v.cursor-1, 0)
 	case "J":
-		v.vp.ScrollDown(1)
+		v.pg.Key("j")
 	case "K":
-		v.vp.ScrollUp(1)
+		v.pg.Key("k")
 	case "ctrl+d", "pgdown":
-		v.vp.HalfPageDown()
+		v.pg.Key("ctrl+d")
 	case "ctrl+u", "pgup":
-		v.vp.HalfPageUp()
+		v.pg.Key("ctrl+u")
 	case "+":
 		if is == nil {
 			return true, nil
@@ -167,7 +189,10 @@ func (v *liveView) Msg(a *App, msg tea.Msg) tea.Cmd {
 }
 
 func (v *liveView) Hints() []string {
-	return []string{"+ log entry", "E edit", "J/K scroll", "M machine"}
+	if v.focus {
+		return []string{"hjkl wbe {} gg G / n move", "esc list", "+ log entry", "E edit"}
+	}
+	return []string{"tab read", "+ log entry", "E edit", "J/K scroll", "M machine"}
 }
 
 func (v *liveView) Render(a *App, w, h int) string {
@@ -179,19 +204,17 @@ func (v *liveView) Render(a *App, w, h int) string {
 	lw := min(max(w/4, 26), 38)
 	left := v.renderList(a, lw, h)
 	rw := w - lw - 3
-	v.vp.SetWidth(rw)
-	v.vp.SetHeight(h)
+	v.pg.SetSize(rw, h)
+	v.pg.focused = v.focus
 	is := v.Selected()
 	if key := fmt.Sprintf("%s|%s|%d|%v", is.ID, is.UpdatedAt, rw, a.snap.Loaded); key != v.key {
-		if !strings.HasPrefix(v.key, is.ID+"|") {
-			v.vp.GotoTop()
-		}
+		reset := !strings.HasPrefix(v.key, is.ID+"|")
 		v.key = key
-		v.vp.SetContent(renderLedger(a, is, rw))
+		v.pg.SetContent(renderLedger(a, is, rw), reset)
 	}
 	sep := strings.TrimRight(strings.Repeat(sRule.Render("│")+"\n", h), "\n")
 	return bar + "\n\n" + lipgloss.JoinHorizontal(lipgloss.Top,
-		lipgloss.NewStyle().Width(lw).Height(h).MaxHeight(h).Render(left), " ", sep, " ", v.vp.View())
+		lipgloss.NewStyle().Width(lw).Height(h).MaxHeight(h).Render(left), " ", sep, " ", v.pg.View())
 }
 
 func (v *liveView) renderList(a *App, w, h int) string {
