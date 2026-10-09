@@ -6,7 +6,7 @@ var helpSections = []struct {
 	title string
 	keys  []string
 }{
-	{"Navigate", []string{"1-9 view", "b board", "tab next view", "j/k move", "ctrl+d/u half page", "[/] prev/next group", "home/end top/bottom", "enter detail", "esc back", "/ search all", "r reload", "q quit"}},
+	{"Navigate", []string{"1-9 0 view", "b board", "0 live ledgers", "+ log entry (Live)", "tab next view", "j/k move", "ctrl+d/u half page", "[/] prev/next group", "home/end top/bottom", "enter detail", "esc back", "/ search all", "r reload", "q quit"}},
 	{"Act on selection", []string{"s status", "C claim", "c close", "n note", "p priority", "l label", "m machine", "x external ref", "e estimate", "d defer", "a new child", "y yank id", "o open ref", "S bd sync"}},
 	{"Views", []string{"f filter (Now, Ready)", "M machine filter", "z expand epic", "space mark (bulk actions)", "esc clear marks", "i inbox", "R resume agent", "L swarm lint", "H show closed", "Z fold text (detail)", "tab/S-tab next/prev link (detail)", "enter open link, esc back"}},
 }

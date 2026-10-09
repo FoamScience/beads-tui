@@ -111,7 +111,22 @@ func NewClient() Client {
 
 // Run executes bd and returns stdout; the error carries bd's last stderr line.
 func (c Client) Run(ctx context.Context, args ...string) ([]byte, error) {
+	return c.run(ctx, "", args...)
+}
+
+// ExecInput runs a write that reads its payload from stdin (e.g. update --body-file -).
+func (c Client) ExecInput(input string, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	_, err := c.run(ctx, input, args...)
+	return err
+}
+
+func (c Client) run(ctx context.Context, input string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "bd", args...)
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
+	}
 	cmd.Env = append(os.Environ(), "BEADS_DIR="+c.Dir)
 	cmd.Dir = filepath.Dir(c.Dir)
 	var stdout, stderr bytes.Buffer

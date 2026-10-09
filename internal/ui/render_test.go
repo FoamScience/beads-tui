@@ -28,7 +28,7 @@ func fixture() []bd.Issue {
 
 func TestViewsFitTerminal(t *testing.T) {
 	for _, size := range [][2]int{{60, 15}, {80, 24}, {120, 40}, {160, 50}} {
-		for tab := range 9 {
+		for tab := range 10 {
 			for _, enter := range []bool{false, true} {
 				name := fmt.Sprintf("%dx%d/tab%d/enter=%v", size[0], size[1], tab+1, enter)
 				a := New(bd.Client{Dir: t.TempDir()})
@@ -43,7 +43,7 @@ func TestViewsFitTerminal(t *testing.T) {
 					a.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 				}
 				out := a.render()
-				if head := ansi.Strip(strings.SplitN(out, "\n", 2)[0]); !strings.Contains(head, "1 ") || !strings.Contains(head, fmt.Sprint(len(a.views))) {
+				if head := ansi.Strip(strings.SplitN(out, "\n", 2)[0]); !strings.Contains(head, "1 ") || !strings.Contains(head, fmt.Sprint(len(a.views)%10)) {
 					t.Errorf("%s: header lost tabs: %q", name, head)
 				}
 				if tab == 0 && !strings.Contains(out, "Active child") {
@@ -329,4 +329,65 @@ func rowsOf(v View) []row {
 		return x.rows
 	}
 	return nil
+}
+
+func TestLiveTabRendersLedger(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	issues := append(fixture(), bd.Issue{
+		ID: "t-l", Parent: "t-a", Title: "Campaign ledger", IssueType: "task", Status: "pinned",
+		Labels: []string{"live", "machine:u-host"}, UpdatedAt: time.Now(),
+		Description: "Tracks the campaign.\n\n= Current state =\n\n| Item | Value |\n|---|---|\n| Parametrized | 24 / 38 |\n\n= Log =\n\n2026-10-08: built\n2026-10-09: fixes landed\n",
+		Design:      "Rerun with `make campaign`.",
+	}, bd.Issue{ID: "t-m", Title: "Other machine ledger", Status: "pinned", Labels: []string{"live", "machine:other"}, UpdatedAt: time.Now()})
+	a.Update(snapshotMsg{issues: issues, gen: a.gen})
+	a.active = a.viewIndex("Live")
+	out := ansi.Strip(a.render())
+	for _, want := range []string{"Campaign ledger", "Current state", "Parametrized", "24 / 38", "Log (2)", "fixes landed", "Runbook", "1 live ledgers"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Live tab lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Other machine ledger") {
+		t.Error("Live tab ignores the machine filter")
+	}
+	if i, j := strings.Index(out, "fixes landed"), strings.Index(out, "built"); i < 0 || j < 0 || i > j {
+		t.Error("log should list the newest entry first")
+	}
+}
+
+func TestMarkdownKeepsPlaceholders(t *testing.T) {
+	d := newDetail()
+	in := "## Provenance\n\nruns/<sim>_<attempt>/attempt.json, `--only <sims>`, a < b, snake_case_name, runs/<sim>_<attempt>/\n\n```\n<kept as is>\n```"
+	out := ansi.Strip(d.markdown(in, 80))
+	for _, want := range []string{"Provenance", "runs/<sim>_<attempt>/attempt.json", "--only <sims>", "a < b", "snake_case_name", "<kept as is>"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered markdown lost %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "## Provenance") || strings.Contains(out, `\<`) {
+		t.Errorf("heading not rendered or escape leaked:\n%s", out)
+	}
+}
+
+func TestLedgerLogRendersInlineMarkdown(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	issues := append(fixture(), bd.Issue{
+		ID: "t-l", Title: "Ledger", Status: "pinned", Labels: []string{"live"}, UpdatedAt: time.Now(),
+		Description: "Tracks.\n\n= Current state =\n\n| Item | Value |\n|---|---|\n| Tool | `make run` on **main** |\n\n= Log =\n\n2026-10-09: ran `collect` on runs/<sim>_<attempt>/, **24/38** done\n",
+	})
+	a.Update(snapshotMsg{issues: issues, gen: a.gen})
+	a.active = a.viewIndex("Live")
+	out := strings.Join(strings.Fields(ansi.Strip(a.render())), " ") // inline code is drawn padded
+	for _, want := range []string{"ran collect on runs/<sim>_<attempt>/, 24/38 done", "make run on main"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("ledger markdown not rendered, missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "**") || strings.Contains(out, "`collect`") {
+		t.Errorf("raw markdown left in the ledger:\n%s", out)
+	}
 }

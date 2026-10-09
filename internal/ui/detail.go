@@ -13,6 +13,8 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
+	gansi "charm.land/glamour/v2/ansi"
+	"charm.land/glamour/v2/styles"
 	"github.com/FoamScience/beads-tui/internal/bd"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -32,6 +34,7 @@ type detail struct {
 	collapsed map[string]bool
 	md        *glamour.TermRenderer
 	mdWidth   int
+	inl       map[int]*glamour.TermRenderer // marginless renderers for inline text, by width
 	dark      bool
 
 	// links are the issues listed in the pane (children, deps), in screen order; tab walks them.
@@ -63,17 +66,13 @@ func (d *detail) loadComments(a *App, is *bd.Issue) tea.Cmd {
 
 func (d *detail) markdown(s string, w int) string {
 	if d.md == nil || d.mdWidth != w {
-		style := "dark"
-		if !d.dark {
-			style = "light"
-		}
-		r, err := glamour.NewTermRenderer(glamour.WithStandardStyle(style), glamour.WithWordWrap(w))
+		r, err := glamour.NewTermRenderer(glamour.WithStyles(markdownStyle(d.dark)), glamour.WithWordWrap(w))
 		if err != nil {
 			return s
 		}
 		d.md, d.mdWidth = r, w
 	}
-	out, err := d.md.Render(s)
+	out, err := d.md.Render(escapeTags(s))
 	if err != nil {
 		return s
 	}
@@ -418,4 +417,92 @@ func (d *detail) selectedLink() string {
 		return ""
 	}
 	return d.links[d.linkSel]
+}
+
+// escapeTags backslash-escapes "<" where markdown would start an HTML tag, and "_" where it would
+// start emphasis, so placeholders such as runs/<sim>_<attempt>/ survive rendering. Underscores
+// inside words were never emphasis; inline code and fenced blocks are left alone.
+func escapeTags(s string) string {
+	var b strings.Builder
+	fence := ""
+	for i, line := range strings.Split(s, "\n") {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		t := strings.TrimSpace(line)
+		if fence == "" && (strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~")) {
+			fence = t[:3]
+		} else if fence != "" && strings.HasPrefix(t, fence) {
+			fence = ""
+			b.WriteString(line)
+			continue
+		}
+		if fence != "" {
+			b.WriteString(line)
+			continue
+		}
+		inCode := false
+		for j := 0; j < len(line); j++ {
+			c := line[j]
+			switch {
+			case c == '`':
+				inCode = !inCode
+			case c == '<' && !inCode && j+1 < len(line) && tagStart(line[j+1]):
+				b.WriteByte('\\')
+			case c == '_' && !inCode && !(j > 0 && alnum(line[j-1]) && j+1 < len(line) && alnum(line[j+1])):
+				// an underscore next to punctuation would open _emphasis_ and vanish (runs/<sim>_<attempt>)
+				b.WriteByte('\\')
+			}
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+func tagStart(c byte) bool {
+	return c == '/' || c == '!' || c == '?' || (c|0x20 >= 'a' && c|0x20 <= 'z')
+}
+
+// markdownStyle is glamour's standard style without the literal "##" heading prefixes;
+// headings keep their bold colour.
+func markdownStyle(dark bool) gansi.StyleConfig {
+	st := styles.LightStyleConfig
+	if dark {
+		st = styles.DarkStyleConfig
+	}
+	for _, h := range []*gansi.StyleBlock{&st.H2, &st.H3, &st.H4, &st.H5, &st.H6} {
+		h.Prefix = ""
+	}
+	return st
+}
+
+func alnum(c byte) bool { return c >= '0' && c <= '9' || c|0x20 >= 'a' && c|0x20 <= 'z' }
+
+// inline renders a short markdown fragment (a log entry, a table value) wrapped to w, without the
+// document margin and blank lines a full render adds, so it can sit next to a label or chip.
+func (d *detail) inline(s string, w int) []string {
+	if d.inl == nil {
+		d.inl = map[int]*glamour.TermRenderer{}
+	}
+	r := d.inl[w]
+	if r == nil {
+		st := markdownStyle(d.dark)
+		zero := uint(0)
+		st.Document.Margin = &zero
+		st.Document.BlockPrefix, st.Document.BlockSuffix = "", ""
+		var err error
+		if r, err = glamour.NewTermRenderer(glamour.WithStyles(st), glamour.WithWordWrap(w)); err != nil {
+			return strings.Split(ansi.Wordwrap(s, w, " "), "\n")
+		}
+		d.inl[w] = r
+	}
+	out, err := r.Render(escapeTags(s))
+	if err != nil {
+		return strings.Split(ansi.Wordwrap(s, w, " "), "\n")
+	}
+	lines := strings.Split(strings.Trim(out, "\n"), "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimRight(l, " ")
+	}
+	return lines
 }
