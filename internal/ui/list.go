@@ -247,6 +247,12 @@ func (l *issueList) renderRow(a *App, r row, sel bool, w int) string {
 	if sel {
 		title = sSel.Render(title)
 	}
+	if is.IssueType == "epic" {
+		// epic rows (Epics tab) carry the same badge as epic group headers
+		left = fmt.Sprintf("%s%s", marker, indent)
+		titleW = max(w-lipgloss.Width(left)-lipgloss.Width(right), 8)
+		return left + padRight(ansi.Truncate(epicBadge(a, is), titleW, "…"), titleW) + right
+	}
 	title = padRight(ansi.Truncate(typ+title, titleW, "…"), titleW)
 	return left + title + right
 }

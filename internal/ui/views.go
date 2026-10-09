@@ -95,7 +95,7 @@ func groupByEpic(a *App, issues []*bd.Issue) []row {
 			done, total := a.snap.Progress(k)
 			h = row{
 				issue:  e,
-				header: glyph(a.snap, e) + " " + sAccent.Render(a.shortID(k)) + "  " + sBold.Render(e.Title),
+				header: epicBadge(a, e),
 				right:  progressBar(done, total, 8) + sDim.Render(fmt.Sprintf(" %d/%d", done, total)),
 			}
 		}

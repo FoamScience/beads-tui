@@ -579,13 +579,13 @@ func (a *App) header() string {
 	for _, layout := range []struct {
 		sep   string
 		names bool
-	}{{"  ", true}, {" ", true}, {" ", false}} {
+	}{{" ", true}, {"", true}, {"", false}} {
 		tabs := " " + a.tabs(layout.sep, layout.names)
 		if gap := a.w - lipgloss.Width(tabs) - lipgloss.Width(right); gap >= 1 {
 			return tabs + strings.Repeat(" ", gap) + right
 		}
 	}
-	return ansi.Truncate(" "+a.tabs(" ", false)+" "+right, a.w, "…")
+	return ansi.Truncate(" "+a.tabs("", false)+" "+right, a.w, "…")
 }
 
 // tabs renders the view switcher; without names, only the active view keeps its label.
