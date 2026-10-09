@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	gansi "charm.land/glamour/v2/ansi"
@@ -27,7 +26,7 @@ type commentsMsg struct {
 
 // detail renders one issue; content is rebuilt when the issue, its comments or the width change.
 type detail struct {
-	vp        viewport.Model
+	pg        pager
 	id        string
 	key       string
 	comments  map[string][]bd.Comment
@@ -45,8 +44,7 @@ type detail struct {
 }
 
 func newDetail() *detail {
-	vp := viewport.New()
-	return &detail{vp: vp, comments: map[string][]bd.Comment{}, collapsed: map[string]bool{}, dark: true, linkSel: -1}
+	return &detail{comments: map[string][]bd.Comment{}, collapsed: map[string]bool{}, dark: true, linkSel: -1}
 }
 
 func (d *detail) loadComments(a *App, is *bd.Issue) tea.Cmd {
@@ -83,8 +81,7 @@ func (d *detail) render(a *App, is *bd.Issue, w, h int) string {
 	if is == nil {
 		return sDim.Render("\n  nothing selected")
 	}
-	d.vp.SetWidth(w)
-	d.vp.SetHeight(h)
+	d.pg.SetSize(w, h)
 	cs, fetched := d.comments[is.ID]
 	if is.ID != d.id {
 		d.linkSel = -1
@@ -92,13 +89,11 @@ func (d *detail) render(a *App, is *bd.Issue, w, h int) string {
 	key := fmt.Sprintf("%s|%s|%s|%d|%s|%d|%d|%d|%v|%v|%v|%v|%d", is.ID, is.UpdatedAt, is.Status, is.Priority, is.ExternalRef, is.EstimatedMinutes,
 		w, len(cs), fetched && cs != nil, a.snap.Loaded, d.collapsed, d.dark, d.linkSel)
 	if key != d.key {
-		if is.ID != d.id {
-			d.vp.GotoTop()
-		}
+		reset := is.ID != d.id
 		d.id, d.key = is.ID, key
-		d.vp.SetContent(d.resolveLinks(d.content(a, is, w)))
+		d.pg.SetContent(d.resolveLinks(d.content(a, is, w)), reset)
 	}
-	return d.vp.View()
+	return d.pg.View()
 }
 
 var detailSections = []string{"description", "design", "acceptance", "notes", "comments", "deps", "children", "refs", "sessions"}
@@ -406,17 +401,20 @@ func (d *detail) moveLink(step int) {
 	default:
 		d.linkSel = (d.linkSel + step + len(d.links)) % len(d.links)
 	}
-	line := d.linkLines[d.linkSel]
-	if line < d.vp.YOffset() || line >= d.vp.YOffset()+d.vp.Height() {
-		d.vp.SetYOffset(max(line-d.vp.Height()/3, 0))
-	}
+	d.pg.GotoLine(d.linkLines[d.linkSel])
 }
 
+// selectedLink is the link picked with tab, else the one on the cursor's line.
 func (d *detail) selectedLink() string {
-	if d.linkSel < 0 || d.linkSel >= len(d.links) {
-		return ""
+	if d.linkSel >= 0 && d.linkSel < len(d.links) {
+		return d.links[d.linkSel]
 	}
-	return d.links[d.linkSel]
+	for i, l := range d.linkLines {
+		if l == d.pg.row {
+			return d.links[i]
+		}
+	}
+	return ""
 }
 
 // escapeTags backslash-escapes "<" where markdown would start an HTML tag, and "_" where it would

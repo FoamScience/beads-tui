@@ -8,6 +8,7 @@ var helpSections = []struct {
 }{
 	{"Navigate", []string{"1-9 0 view", "b board", "0 live ledgers", "+ log entry (Live)", "tab next view", "j/k move", "ctrl+d/u half page", "[/] prev/next group", "home/end top/bottom", "enter detail", "esc back", "/ search all", "r reload", "q quit"}},
 	{"Act on selection", []string{"s status", "C claim", "c close", "n note", "p priority", "l label", "m machine", "x external ref", "e estimate", "d defer", "a new child", "y yank id", "o open ref", "S bd sync"}},
+	{"Reading (detail, Live ledger)", []string{"h/j/k/l move", "w/b/e words", "W/B/E WORDs", "0/^/$ line", "{/} paragraph", "gg/G top/bottom", "5G line 5", "H/M/L screen", "ctrl+d/u/f/b page", "zz/zt/zb center/top/bottom", "/ n N search", "i/t/= note/label/est"}},
 	{"Views", []string{"f filter (Now, Ready)", "M machine filter", "z expand epic", "space mark (bulk actions)", "esc clear marks", "i inbox", "R resume agent", "L swarm lint", "H show closed", "Z fold text (detail)", "tab/S-tab next/prev link (detail)", "enter open link, esc back"}},
 }
 
