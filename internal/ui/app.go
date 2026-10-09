@@ -104,7 +104,7 @@ func New(client bd.Client) *App {
 		idWidth:      8,
 		loading:      true,
 	}
-	a.views = []View{newNow(), newReady(), newEpics(), newTriage(), newActivity(), newGraph(), newMolecules(), newInbox(), newKanban()}
+	a.views = []View{newNow(), newReady(), newEpics(), newTriage(), newActivity(), newGraph(), newMolecules(), newInbox(), newKanban(), newLive()}
 	if cached := loadCache(client.Dir); len(cached) > 0 {
 		a.setSnapshot(bd.NewSnapshot(cached))
 		a.cached = true
@@ -159,7 +159,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case tea.BackgroundColorMsg:
 		a.detail.dark = msg.IsDark()
-		a.detail.md = nil
+		a.detail.md, a.detail.inl = nil, nil
 		return a, nil
 	case snapshotMsg:
 		if msg.gen != a.gen {
@@ -326,7 +326,7 @@ func (a *App) selected() *bd.Issue {
 // split shows the detail pane beside list views; Graph and Molecules use the full width themselves.
 func (a *App) split() bool {
 	switch a.views[a.active].(type) {
-	case *graphView, *moleculesView, *kanbanView:
+	case *graphView, *moleculesView, *kanbanView, *liveView:
 		return false
 	}
 	return a.w >= splitMinWidth
@@ -411,6 +411,8 @@ func (a *App) key(msg tea.KeyPressMsg) tea.Cmd {
 		return a.switchTo(a.viewIndex("Inbox"))
 	case "b":
 		return a.switchTo(a.viewIndex("Board"))
+	case "0":
+		return a.switchTo(a.viewIndex("Live"))
 	case "space":
 		if is := a.selected(); is != nil {
 			if a.marks[is.ID] {
@@ -592,9 +594,10 @@ func (a *App) header() string {
 func (a *App) tabs(sep string, names bool) string {
 	out := make([]string, len(a.views))
 	for i, v := range a.views {
-		label := fmt.Sprintf("%d %s", i+1, v.Name())
+		n := (i + 1) % 10 // the tenth tab answers to 0
+		label := fmt.Sprintf("%d %s", n, v.Name())
 		if i != a.active && !names {
-			label = fmt.Sprintf("%d", i+1)
+			label = fmt.Sprintf("%d", n)
 		}
 		if i == a.active {
 			out[i] = sTabOn.Render(label)
