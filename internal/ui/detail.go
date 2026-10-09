@@ -143,7 +143,7 @@ func (d *detail) content(a *App, is *bd.Issue, w int) string {
 	}
 	line(who...)
 	if len(is.Labels) > 0 {
-		line(sDim.Render("labels"), strings.Join(is.Labels, "  "))
+		line(sDim.Render("labels"), labelChips(is.Labels))
 	}
 	if !is.Closed() {
 		if chain := s.BlockChain(is); len(chain) > 0 {
