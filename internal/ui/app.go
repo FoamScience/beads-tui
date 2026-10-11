@@ -71,6 +71,7 @@ type App struct {
 	help         bool
 	marks        map[string]bool        // issues picked with space; actions apply to all of them
 	herdr        map[string]agentPane   // live agent panes by Claude session id; nil when herdr is unavailable
+	detailX      int                    // first column of the split detail pane at the last render, -1 when not split
 	sessionNames map[string]sessionInfo // titles of ended sessions, read from their transcripts
 	state        *state
 	changed      map[string]time.Time
@@ -242,6 +243,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case tea.KeyPressMsg:
 		return a, a.key(msg)
+	case tea.MouseWheelMsg:
+		return a, a.wheel(msg.Mouse())
 	case tea.PasteMsg:
 		if a.modal != nil {
 			return a, a.modal.forward(msg)
@@ -348,6 +351,14 @@ func (a *App) key(msg tea.KeyPressMsg) tea.Cmd {
 	if a.help {
 		a.help = false
 		return nil
+	}
+	if k == "ctrl+o" {
+		a.state.MouseOff = !a.state.MouseOff
+		msg := "mouse on: wheel scrolls, shift+drag selects text"
+		if a.state.MouseOff {
+			msg = "mouse off: drag selects text, wheel inactive"
+		}
+		return tea.Batch(flash(msg), saveState(a))
 	}
 	if a.focusDetail || a.detailOpen || a.override != nil {
 		if pg := &a.detail.pg; pg.count != "" && pg.pending == "" && k != "g" && k != "z" && !(len(k) == 1 && k[0] >= '0' && k[0] <= '9') {
@@ -515,6 +526,9 @@ func (a *App) searchModal() *modal {
 func (a *App) View() tea.View {
 	v := tea.NewView(a.render())
 	v.AltScreen = true
+	if !a.state.MouseOff {
+		v.MouseMode = tea.MouseModeCellMotion // for the wheel; shift+drag still selects text in most terminals
+	}
 	v.WindowTitle = "bt"
 	return v
 }
@@ -523,6 +537,7 @@ func (a *App) render() string {
 	if a.w == 0 {
 		return ""
 	}
+	a.detailX = -1
 	if a.w < minW || a.h < minH {
 		return lipgloss.Place(a.w, a.h, lipgloss.Center, lipgloss.Center,
 			sWarn.Render(fmt.Sprintf("bt needs at least %dx%d (now %dx%d)", minW, minH, a.w, a.h)))
@@ -538,6 +553,7 @@ func (a *App) render() string {
 		body = a.detail.render(a, a.selected(), a.w, bodyH)
 	case a.split():
 		lw := a.w * 11 / 20
+		a.detailX = lw + 2 // the detail pane starts after the separator column and its space
 		left := v.Render(a, lw, bodyH)
 		sep := strings.TrimRight(strings.Repeat(sRule.Render("│")+"\n", bodyH), "\n")
 		right := a.detail.render(a, a.selected(), a.w-lw-2, bodyH)
@@ -660,4 +676,36 @@ func (a *App) herdrPoll() tea.Cmd {
 		return nil
 	}
 	return pollHerdr()
+}
+
+const wheelLines = 3
+
+// wheel scrolls the text pane under the pointer (detail or Live ledger) and, anywhere else,
+// moves the selection to the next or previous bead, like j/k in that view.
+func (a *App) wheel(m tea.Mouse) tea.Cmd {
+	d := 0
+	switch m.Button {
+	case tea.MouseWheelDown:
+		d = 1
+	case tea.MouseWheelUp:
+		d = -1
+	}
+	if d == 0 || a.modal != nil || a.help {
+		return nil
+	}
+	detailFull := (a.detailOpen || a.override != nil) && !a.split()
+	if detailFull || (a.detailX >= 0 && m.X >= a.detailX) {
+		a.detail.pg.Scroll(d * wheelLines)
+		return nil
+	}
+	if lv, ok := a.views[a.active].(*liveView); ok && lv.paneX > 0 && m.X >= lv.paneX {
+		lv.pg.Scroll(d * wheelLines)
+		return nil
+	}
+	k := "j"
+	if d < 0 {
+		k = "k"
+	}
+	_, cmd := a.views[a.active].Update(a, tea.KeyPressMsg{Code: rune(k[0]), Text: k})
+	return tea.Batch(cmd, a.detail.loadComments(a, a.selected()))
 }

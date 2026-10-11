@@ -20,6 +20,7 @@ type liveView struct {
 	cursor  int
 	pg      pager
 	focus   bool   // keys go to the ledger pane (vim motions) instead of the list
+	paneX   int    // first column of the ledger pane at the last render, for wheel routing
 	key     string // what the pane was last rendered for
 }
 
@@ -202,6 +203,7 @@ func (v *liveView) Render(a *App, w, h int) string {
 		return bar + "\n\n" + sDim.Render("  no live ledgers (pinned beads labelled live) for this filter")
 	}
 	lw := min(max(w/4, 26), 38)
+	v.paneX = lw + 3
 	left := v.renderList(a, lw, h)
 	rw := w - lw - 3
 	v.pg.SetSize(rw, h)

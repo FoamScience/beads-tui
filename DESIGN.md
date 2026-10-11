@@ -38,6 +38,10 @@ Sources: atuin shell history (58 `bd` commands), Claude transcripts under `~/.cl
 4. ratchet.nvim is not considered; the TUI stands on its own and opens `metadata.refs` in `$EDITOR`.
 5. Current host is known (`hostname`), so "my machine" filters work without config.
 
+## Mouse wheel
+
+The wheel acts on what is under the pointer. Over a text pane (the detail pane, split or full screen, and the Live ledger pane) it scrolls the text three lines per notch, pulling the cursor along only when it would leave the screen. Anywhere else it moves the selection to the next or previous bead, the same as `j`/`k` in that view (cards on the Board, nodes in Graph). Turning the mouse on means a plain drag no longer selects terminal text; most terminals still select with shift+drag. `ctrl+o` hands the mouse back to the terminal (plain drags select, the wheel does nothing in bt) and back again; the choice is remembered.
+
 ## Machine filter
 
 One filter, chosen with `M` from any list tab and remembered, applies to Now, Ready, Epics, Triage, Activity, Inbox and Board: beads labelled for the selected machine (this one by default, or any `machine:` host, or all), plus beads with no machine label, which belong to nobody and so show everywhere. Graph keeps the whole dependency graph so no edge loses an end; search, Molecules and `bt triage --json` stay global.

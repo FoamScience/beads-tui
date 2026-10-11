@@ -413,3 +413,47 @@ func TestDetailCountsApplyToTheNextMotionOnly(t *testing.T) {
 		t.Fatalf("a count before a non-motion key must not carry over, row %d", a.detail.pg.row)
 	}
 }
+
+func TestWheelScrollsPaneUnderPointerElseMovesSelection(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.state.NowStatuses = []string{"open", "in_progress"}
+	a.Update(tea.WindowSizeMsg{Width: 160, Height: 15}) // split, short enough for the detail to scroll
+	a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
+	a.render()
+	wheel := func(x int, b tea.MouseButton) {
+		a.Update(tea.MouseWheelMsg{X: x, Y: 5, Button: b})
+		a.render()
+	}
+	first := a.selected().ID
+	wheel(5, tea.MouseWheelDown) // over the list
+	if a.selected().ID == first {
+		t.Fatal("wheel over the list should move to the next bead")
+	}
+	sel, off := a.selected().ID, a.detail.pg.off
+	wheel(a.detailX+3, tea.MouseWheelDown) // over the detail pane
+	if a.selected().ID != sel {
+		t.Fatal("wheel over the detail pane must not change the selection")
+	}
+	if a.detail.pg.off == off && len(a.detail.pg.lines) > a.detail.pg.h {
+		t.Fatalf("wheel over the detail pane should scroll it (off %d, %d lines in %d)", a.detail.pg.off, len(a.detail.pg.lines), a.detail.pg.h)
+	}
+}
+
+func TestCtrlOTogglesMouseCapture(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
+	if a.View().MouseMode != tea.MouseModeCellMotion {
+		t.Fatal("mouse should be captured by default")
+	}
+	a.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	if !a.state.MouseOff || a.View().MouseMode != tea.MouseModeNone {
+		t.Fatal("ctrl+o should hand the mouse back to the terminal")
+	}
+	a.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	if a.View().MouseMode != tea.MouseModeCellMotion {
+		t.Fatal("a second ctrl+o should capture the mouse again")
+	}
+}
