@@ -384,3 +384,15 @@ func lastIndexRunes(s, q []rune, to int) int {
 	}
 	return -1
 }
+
+// Scroll moves the view by d lines, pulling the cursor along only when it would leave the screen.
+func (p *pager) Scroll(d int) {
+	if len(p.lines) == 0 {
+		return
+	}
+	p.off = clamp(p.off+d, 0, max(len(p.lines)-p.h, 0))
+	if p.row < p.off || p.row >= p.off+p.h {
+		p.row = clamp(p.row, p.off, min(p.off+p.h, len(p.lines))-1)
+		p.col = min(p.want, max(len(p.plain[p.row])-1, 0))
+	}
+}
