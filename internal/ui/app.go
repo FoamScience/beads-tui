@@ -72,6 +72,7 @@ type App struct {
 	marks        map[string]bool        // issues picked with space; actions apply to all of them
 	herdr        map[string]agentPane   // live agent panes by Claude session id; nil when herdr is unavailable
 	detailX      int                    // first column of the split detail pane at the last render, -1 when not split
+	tabEnds      []int                  // column after each tab label in the header at the last render
 	sessionNames map[string]sessionInfo // titles of ended sessions, read from their transcripts
 	state        *state
 	changed      map[string]time.Time
@@ -245,6 +246,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.key(msg)
 	case tea.MouseWheelMsg:
 		return a, a.wheel(msg.Mouse())
+	case tea.MouseClickMsg:
+		return a, a.click(msg.Mouse())
 	case tea.PasteMsg:
 		if a.modal != nil {
 			return a, a.modal.forward(msg)
@@ -537,7 +540,7 @@ func (a *App) render() string {
 	if a.w == 0 {
 		return ""
 	}
-	a.detailX = -1
+	a.detailX, a.tabEnds = -1, nil
 	if a.w < minW || a.h < minH {
 		return lipgloss.Place(a.w, a.h, lipgloss.Center, lipgloss.Center,
 			sWarn.Render(fmt.Sprintf("bt needs at least %dx%d (now %dx%d)", minW, minH, a.w, a.h)))
@@ -606,6 +609,8 @@ func (a *App) header() string {
 // tabs renders the view switcher; without names, only the active view keeps its label.
 func (a *App) tabs(sep string, names bool) string {
 	out := make([]string, len(a.views))
+	a.tabEnds = make([]int, len(a.views))
+	x := 1 // the header's leading space
 	for i, v := range a.views {
 		n := (i + 1) % 10 // the tenth tab answers to 0
 		label := fmt.Sprintf("%d %s", n, v.Name())
@@ -617,6 +622,9 @@ func (a *App) tabs(sep string, names bool) string {
 		} else {
 			out[i] = sTabOff.Render(label)
 		}
+		x += lipgloss.Width(out[i])
+		a.tabEnds[i] = x
+		x += lipgloss.Width(sep)
 	}
 	return strings.Join(out, sep)
 }
@@ -679,6 +687,23 @@ func (a *App) herdrPoll() tea.Cmd {
 }
 
 const wheelLines = 3
+
+// click switches to the tab under the pointer in the header, leaving any open detail.
+func (a *App) click(m tea.Mouse) tea.Cmd {
+	if m.Button != tea.MouseLeft || m.Y != 0 || a.modal != nil {
+		return nil
+	}
+	for i, end := range a.tabEnds {
+		if m.X < end {
+			if m.X < 1 {
+				return nil
+			}
+			a.help, a.focusDetail, a.detailOpen, a.override, a.history = false, false, false, nil, nil
+			return a.switchTo(i)
+		}
+	}
+	return nil
+}
 
 // wheel scrolls the text pane under the pointer (detail or Live ledger) and, anywhere else,
 // moves the selection to the next or previous bead, like j/k in that view.
