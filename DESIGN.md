@@ -38,9 +38,9 @@ Sources: atuin shell history (58 `bd` commands), Claude transcripts under `~/.cl
 4. ratchet.nvim is not considered; the TUI stands on its own and opens `metadata.refs` in `$EDITOR`.
 5. Current host is known (`hostname`), so "my machine" filters work without config.
 
-## Mouse wheel
+## Mouse
 
-The wheel acts on what is under the pointer. Over a text pane (the detail pane, split or full screen, and the Live ledger pane) it scrolls the text three lines per notch, pulling the cursor along only when it would leave the screen. Anywhere else it moves the selection to the next or previous bead, the same as `j`/`k` in that view (cards on the Board, nodes in Graph). Turning the mouse on means a plain drag no longer selects terminal text; most terminals still select with shift+drag. `ctrl+o` hands the mouse back to the terminal (plain drags select, the wheel does nothing in bt) and back again; the choice is remembered.
+The wheel acts on what is under the pointer. Over a text pane (the detail pane, split or full screen, and the Live ledger pane) it scrolls the text three lines per notch, pulling the cursor along only when it would leave the screen. Anywhere else it moves the selection to the next or previous bead, the same as `j`/`k` in that view (cards on the Board, nodes in Graph). A left click on a tab in the header switches to it, leaving any open detail. Turning the mouse on means a plain drag no longer selects terminal text; most terminals still select with shift+drag. `ctrl+o` hands the mouse back to the terminal (plain drags select, the wheel does nothing in bt) and back again; the choice is remembered.
 
 ## Machine filter
 
@@ -198,4 +198,4 @@ Three panes: formulas (from all `bd formula list` search paths), live molecules 
 
 ## Out of scope for v1
 
-Merge-slot, multi-DB switching, mouse. Add when a real use shows up.
+Merge-slot, multi-DB switching, mouse clicks beyond the tab bar. Add when a real use shows up.

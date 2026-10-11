@@ -457,3 +457,40 @@ func TestCtrlOTogglesMouseCapture(t *testing.T) {
 		t.Fatal("a second ctrl+o should capture the mouse again")
 	}
 }
+
+func TestClickOnTabSwitchesView(t *testing.T) {
+	for _, w := range []int{160, 60} { // names shown, then numbers only for inactive tabs
+		a := New(bd.Client{Dir: t.TempDir()})
+		a.state, a.host = defaultState(), "u-host"
+		a.Update(tea.WindowSizeMsg{Width: w, Height: 30})
+		a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
+		head := ansi.Strip(a.header())
+		if names := strings.Contains(head, "Ready"); names != (w == 160) {
+			t.Fatalf("width %d: inactive tab names shown %v", w, names)
+		}
+		for i := len(a.views) - 1; i >= 0; i-- {
+			x := strings.Index(head, fmt.Sprintf(" %d", (i+1)%10)) + 1
+			a.detailOpen = true
+			a.Update(tea.MouseClickMsg{X: x, Y: 0, Button: tea.MouseLeft})
+			if a.active != i || a.detailOpen {
+				t.Fatalf("width %d: click at %d should open tab %d and leave the detail, active %d", w, x, i, a.active)
+			}
+			head = ansi.Strip(a.header())
+		}
+		a.Update(tea.MouseClickMsg{X: 3, Y: 4, Button: tea.MouseLeft})
+		if a.active != 0 {
+			t.Fatal("a click below the header must not switch tabs")
+		}
+	}
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.Update(tea.WindowSizeMsg{Width: 160, Height: 30})
+	a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
+	a.render()
+	a.Update(tea.WindowSizeMsg{Width: 40, Height: 10})
+	a.render()
+	a.Update(tea.MouseClickMsg{X: 20, Y: 0, Button: tea.MouseLeft})
+	if a.active != 0 {
+		t.Fatal("no tab bar is drawn below the minimum size, so clicks must not switch tabs")
+	}
+}
