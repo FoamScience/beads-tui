@@ -10,6 +10,12 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+const (
+	wideCols     = 75 // below this width the list drops the estimate column
+	estColW      = 5
+	updatedLabel = "updated"
+)
+
 // row is a group header, a blank spacer between groups, or an issue line (issue != nil).
 type row struct {
 	spacer bool
@@ -28,6 +34,7 @@ type issueList struct {
 	offset int
 	height int
 	noteW  int // overrides the adaptive note column width
+	ageW   int // width of the updated column, 0 means 4
 }
 
 func (l *issueList) SetRows(rows []row) {
@@ -166,6 +173,32 @@ func (l *issueList) Render(a *App, w, h int) string {
 	return b.String()
 }
 
+func (l *issueList) noteWidth(w int, agent bool) int {
+	noteW := 18
+	if w < 110 {
+		noteW = 10
+	}
+	if l.noteW > 0 {
+		noteW = l.noteW
+	}
+	if agent && w >= wideCols {
+		noteW = max(noteW, 16) // session names are the point of Now's column
+	}
+	return noteW
+}
+
+func (l *issueList) ageColWidth() int {
+	return max(l.ageW, 4)
+}
+
+// columnLabels names the right-hand columns of an agent list, aligned with renderRow.
+func (l *issueList) columnLabels(w int) string {
+	if w < wideCols {
+		return " " + padLeft(sDim.Render(updatedLabel), l.ageColWidth())
+	}
+	return fmt.Sprintf(" %s %s %s", strings.Repeat(" ", l.noteWidth(w, true)), padLeft(sDim.Render(updatedLabel), l.ageColWidth()), padLeft(sDim.Render("est"), estColW))
+}
+
 func (l *issueList) renderRow(a *App, r row, sel bool, w int) string {
 	if r.spacer {
 		return ""
@@ -224,22 +257,13 @@ func (l *issueList) renderRow(a *App, r row, sel bool, w int) string {
 	} else {
 		ag = sDim.Render(ag)
 	}
-	noteW := 18
-	if w < 110 {
-		noteW = 10
-	}
-	if l.noteW > 0 {
-		noteW = l.noteW
-	}
-	if r.agent && w >= 75 {
-		noteW = max(noteW, 16) // session names are the point of Now's column
-	}
+	noteW := l.noteWidth(w, r.agent)
 	right := fmt.Sprintf(" %s %s %s",
 		sDim.Render(padRight(ansi.Truncate(note, noteW, "…"), noteW)),
-		padLeft(ag, 4),
-		padLeft(sDim.Render(minutes(is.EstimatedMinutes)), 5))
-	if w < 75 {
-		right = " " + padLeft(ag, 4)
+		padLeft(ag, l.ageColWidth()),
+		padLeft(sDim.Render(minutes(is.EstimatedMinutes)), estColW))
+	if w < wideCols {
+		right = " " + padLeft(ag, l.ageColWidth())
 	}
 	left := fmt.Sprintf("%s%s%s %s %s ", marker, indent, glyph(a.snap, is), padRight(sDim.Render(id), a.idWidth), prio(is.Priority))
 	titleW := max(w-lipgloss.Width(left)-lipgloss.Width(right), 8)

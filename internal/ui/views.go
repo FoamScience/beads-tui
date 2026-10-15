@@ -140,7 +140,9 @@ func machineHint(a *App) string {
 
 type nowView struct{ listView }
 
-func newNow() *nowView { return &nowView{listView{empty: "nothing active for this filter"}} }
+func newNow() *nowView {
+	return &nowView{listView{empty: "nothing active for this filter", issueList: issueList{ageW: len(updatedLabel)}}}
+}
 
 func (v *nowView) Name() string { return "Now" }
 
@@ -184,15 +186,9 @@ func (v *nowView) Render(a *App, w, h int) string {
 			chips = append(chips, sChipOn.Render(s))
 		}
 	}
-	n := 0
-	for _, r := range v.rows {
-		if r.issue != nil && !r.isHeader() {
-			n++
-		}
-	}
+	right := v.columnLabels(w)
 	bar := fmt.Sprintf(" %s %s   %s %s", sDim.Render("status"), strings.Join(chips, " "), sDim.Render("machine"), machineHint(a))
-	right := sDim.Render(fmt.Sprintf("%d active ", n))
-	bar = ansi.Truncate(bar, w-len(right)-1, "…")
+	bar = ansi.Truncate(bar, w-ansi.StringWidth(right)-1, "…")
 	bar += strings.Repeat(" ", max(w-ansi.StringWidth(bar)-ansi.StringWidth(right), 1)) + right
 	return bar + "\n\n" + v.listView.Render(a, w, h-2)
 }
