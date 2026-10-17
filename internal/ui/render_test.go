@@ -68,7 +68,7 @@ func TestReadyAndBlocked(t *testing.T) {
 	if !s.IsBlocked(s.ByID["t-a.2"]) {
 		t.Error("t-a.2 should be blocked by in-progress t-a.1")
 	}
-	if !ready(s, s.ByID["t-a.3"]) || ready(s, s.ByID["t-a.2"]) || ready(s, s.ByID["t-a"]) {
+	if !s.Ready(s.ByID["t-a.3"]) || s.Ready(s.ByID["t-a.2"]) || s.Ready(s.ByID["t-a"]) {
 		t.Error("ready: want only t-a.3")
 	}
 	if !bd.IDLess("t-a.2", "t-a.10") || bd.IDLess("t-a.10", "t-a.2") {

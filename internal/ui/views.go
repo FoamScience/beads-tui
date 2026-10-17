@@ -226,26 +226,11 @@ func newReady() *readyView { return &readyView{listView{empty: "nothing ready fo
 func (v *readyView) Name() string { return "Ready" }
 
 // ready mirrors bd ready: open, not deferred into the future, no open blocker on itself or an ancestor.
-func ready(s *bd.Snapshot, is *bd.Issue) bool {
-	if is.Status != "open" || is.IssueType == "epic" {
-		return false
-	}
-	if is.DeferUntil != nil && is.DeferUntil.After(time.Now()) {
-		return false
-	}
-	for p := is; p != nil; p = s.ByID[p.Parent] {
-		if s.IsBlocked(p) {
-			return false
-		}
-	}
-	return true
-}
-
 func (v *readyView) Rebuild(a *App) {
 	q := strings.ToLower(a.state.ReadyFilter)
 	var list []*bd.Issue
 	for _, is := range a.snap.Issues {
-		if !ready(a.snap, is) || !a.machineMatch(is) {
+		if !a.snap.Ready(is) || !a.machineMatch(is) {
 			continue
 		}
 		if q != "" {

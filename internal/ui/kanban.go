@@ -21,7 +21,7 @@ type kanbanColumn struct {
 const doneWindow = 7 * 24 * time.Hour
 
 var kanbanColumns = []kanbanColumn{
-	{"Ready", "open", func(s *bd.Snapshot, is *bd.Issue) bool { return ready(s, is) }},
+	{"Ready", "open", func(s *bd.Snapshot, is *bd.Issue) bool { return s.Ready(is) }},
 	{"Blocked", "blocked", func(s *bd.Snapshot, is *bd.Issue) bool {
 		return is.Status == "blocked" || (is.Status == "open" && len(s.BlockChain(is)) > 0)
 	}},

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"os"
+	"slices"
 	"testing"
 )
 
@@ -17,4 +18,22 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
+}
+
+func TestBarCells(t *testing.T) {
+	for _, c := range []struct {
+		counts []int
+		want   []int
+	}{
+		{[]int{0, 0, 0, 0, 0}, []int{0, 0, 0, 0, 0}},
+		{[]int{19, 0, 0, 1, 0}, []int{19, 0, 0, 1, 0}},
+		{[]int{100, 1, 0, 0, 0}, []int{19, 1, 0, 0, 0}},
+		{[]int{1, 1, 1, 0, 0}, []int{7, 7, 6, 0, 0}},
+		{[]int{5, 0, 0, 5, 10}, []int{5, 0, 0, 5, 10}},
+	} {
+		got := barCells(c.counts, 20)
+		if !slices.Equal(got, c.want) {
+			t.Errorf("barCells(%v) = %v, want %v", c.counts, got, c.want)
+		}
+	}
 }

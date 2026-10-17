@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/FoamScience/beads-tui/internal/bd"
+	"github.com/FoamScience/beads-tui/internal/dispatch"
 	"github.com/FoamScience/beads-tui/internal/ui"
 )
 
@@ -19,6 +20,9 @@ var version = "dev" // set by make via -ldflags
 const usage = `usage:
   bt                  open the TUI
   bt triage [--json]  print hygiene violations (JSON for agents)
+  bt dispatch         send allowed beads to lane sessions; the screen edits the allow-list
+  bt dispatch --dry-run
+                      print lanes and what one tick would do
   bt --version        print the version`
 
 func main() {
@@ -36,6 +40,25 @@ func main() {
 			fail(fmt.Errorf("%s", usage))
 		}
 		if err := triage(c, asJSON); err != nil {
+			fail(err)
+		}
+	case os.Args[1] == "dispatch":
+		dry := len(os.Args) > 2 && os.Args[2] == "--dry-run"
+		if len(os.Args) > 3 || (len(os.Args) == 3 && !dry) {
+			fail(fmt.Errorf("%s", usage))
+		}
+		if dry {
+			if err := dispatch.Run(c, os.Stdout); err != nil {
+				fail(err)
+			}
+			return
+		}
+		e, err := dispatch.NewEngine(c, false)
+		if err != nil {
+			fail(err)
+		}
+		defer e.Close()
+		if _, err := tea.NewProgram(ui.NewDispatch(e)).Run(); err != nil {
 			fail(err)
 		}
 	default:

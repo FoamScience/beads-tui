@@ -114,6 +114,22 @@ func (s *Snapshot) Root(is *Issue) *Issue {
 	return is
 }
 
+// Ready reports whether the issue would show in bd ready: open, not deferred, no blocked ancestor.
+func (s *Snapshot) Ready(is *Issue) bool {
+	if is.Status != "open" || is.IssueType == "epic" {
+		return false
+	}
+	if is.DeferUntil != nil && is.DeferUntil.After(time.Now()) {
+		return false
+	}
+	for p := is; p != nil; p = s.ByID[p.Parent] {
+		if s.IsBlocked(p) {
+			return false
+		}
+	}
+	return true
+}
+
 // Progress counts closed and total descendants.
 func (s *Snapshot) Progress(id string) (closed, total int) {
 	for _, c := range s.Children[id] {
