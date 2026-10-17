@@ -106,7 +106,7 @@ func New(client bd.Client) *App {
 		idWidth:      8,
 		loading:      true,
 	}
-	a.views = []View{newNow(), newReady(), newEpics(), newTriage(), newActivity(), newGraph(), newMolecules(), newInbox(), newKanban(), newLive()}
+	a.views = []View{newNow(), newActivity(), newReady(), newInbox(), newEpics(), newKanban(), newMolecules(), newGraph(), newTriage(), newLive()}
 	if cached := loadCache(client.Dir); len(cached) > 0 {
 		a.setSnapshot(bd.NewSnapshot(cached))
 		a.cached = true

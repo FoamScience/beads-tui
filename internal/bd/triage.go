@@ -41,6 +41,9 @@ var TriageRules = []TriageRule{
 		}
 		return true
 	}},
+	{"not-claimed-by-session", "open or in progress, not claimed by a session", "bd update {id} --status in_progress, from the agent session working it", "", func(s *Snapshot, is *Issue) bool {
+		return (is.Status == "open" || is.Status == "in_progress") && is.IssueType != "epic" && !is.HasSession()
+	}},
 	{"repo-task-without-refs", "repo task without code refs", `bd update {id} --metadata '{"refs":[{"repo":"~/repo/x","file":"path","symbol":"Name","line":1}]}'`, "", func(s *Snapshot, is *Issue) bool {
 		return is.Status == "in_progress" && is.IssueType != "epic" && is.LabelWithPrefix("repo:") != "" && len(is.Refs()) == 0
 	}},

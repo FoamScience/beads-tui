@@ -76,6 +76,20 @@ func (i *Issue) Refs() []Ref {
 	return m.Refs
 }
 
+// HasSession reports whether an agent session was recorded on the issue by the herdr-bd-sessions hook.
+func (i *Issue) HasSession() bool {
+	var m map[string]json.RawMessage
+	if len(i.Metadata) == 0 || json.Unmarshal(i.Metadata, &m) != nil {
+		return false
+	}
+	for k := range m {
+		if strings.HasPrefix(k, "claude_session.") {
+			return true
+		}
+	}
+	return false
+}
+
 func (i *Issue) HasLabel(l string) bool {
 	for _, x := range i.Labels {
 		if x == l {

@@ -26,9 +26,9 @@ func TestDump(t *testing.T) {
 	a.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	a.Update(snapshotMsg{issues: is})
 	if r := os.Getenv("BT_ROOT"); r != "" {
-		a.views[5].(*graphView).showClosed = os.Getenv("BT_CLOSED") != ""
-		a.views[5].(*graphView).setRoot(a, a.snap.ByID[r])
-		a.active = 5
+		a.active = a.viewIndex("Graph")
+		a.views[a.active].(*graphView).showClosed = os.Getenv("BT_CLOSED") != ""
+		a.views[a.active].(*graphView).setRoot(a, a.snap.ByID[r])
 	}
 	for _, k := range os.Getenv("BT_KEYS") {
 		if k == '\r' {

@@ -1,6 +1,7 @@
 package bd
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -10,6 +11,7 @@ func TestTriage(t *testing.T) {
 	s := NewSnapshot([]Issue{
 		{ID: "x-e", IssueType: "epic", Status: "open", Labels: []string{"machine:h"}, ExternalRef: "K-1", EstimatedMinutes: 60},
 		{ID: "x-e.1", Parent: "x-e", IssueType: "task", Status: "in_progress", UpdatedAt: old, Labels: []string{"repo:r"}},
+		{ID: "x-e.2", Parent: "x-e", IssueType: "task", Status: "in_progress", UpdatedAt: time.Now(), Labels: []string{"machine:h"}, Metadata: []byte(`{"claude_session.aaaa_bbbb":"none"}`)},
 		{ID: "x-loose", IssueType: "task", Status: "open", Labels: []string{"machine:h"}},
 		{ID: "x-done", IssueType: "task", Status: "closed"},
 	})
@@ -19,6 +21,7 @@ func TestTriage(t *testing.T) {
 		"root-without-estimate":     {"x-loose"},
 		"not-under-epic":            {"x-loose"},
 		"stale-in-progress":         {"x-e.1"},
+		"not-claimed-by-session":    {"x-e.1", "x-loose"},
 		"repo-task-without-refs":    {"x-e.1"},
 		"closable-epic":             nil,
 	}
@@ -27,7 +30,7 @@ func TestTriage(t *testing.T) {
 		for _, is := range r.Issues {
 			got = append(got, is.ID)
 		}
-		if len(got) != len(want[r.ID]) || (len(got) > 0 && got[0] != want[r.ID][0]) {
+		if !slices.Equal(got, want[r.ID]) {
 			t.Errorf("%s: got %v want %v", r.ID, got, want[r.ID])
 		}
 	}

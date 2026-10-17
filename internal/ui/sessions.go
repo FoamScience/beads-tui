@@ -125,17 +125,31 @@ func (a *App) agentNote(is *bd.Issue) string {
 	if !ok {
 		return sDim.Render("○ ended " + a.sessionLabel(a.latestSession(is)))
 	}
-	label := p.Title
+	glyph, label, st := p.badge()
+	return cellStyles[st](glyph + " " + label)
+}
+
+// badge is how a live pane shows next to its beads: a status glyph, the pane title and a canvas style.
+func (p agentPane) badge() (glyph, label string, st int) {
+	label = p.Title
 	if label == "" {
 		label = p.WSLabel
 	}
 	switch p.Status {
 	case "working":
-		return sWarn.Render("▶ " + label)
+		return "▶", label, stWarn
 	case "idle":
-		return sOK.Render("◦ " + label)
+		return "◦", label, stOK
 	}
-	return sDim.Render("· " + label)
+	return "·", label, stDim
+}
+
+// sessionBadge is badge for any session: live ones from herdr, ended ones by their transcript title.
+func (a *App) sessionBadge(id string) (glyph, label string, st int) {
+	if p, ok := a.herdr[id]; ok {
+		return p.badge()
+	}
+	return "○", a.sessionLabel(id), stDim
 }
 
 func transcriptPath(id string) string {
@@ -205,18 +219,24 @@ func readSessionInfo(id string) sessionInfo {
 // nameEndedSessions looks up the claimed sessions herdr no longer runs and that bt has not named yet.
 func (a *App) nameEndedSessions() tea.Cmd {
 	var ids []string
+	want := func(id string) {
+		if _, live := a.herdr[id]; !live {
+			if _, known := a.sessionNames[id]; !known {
+				a.sessionNames[id] = sessionInfo{} // in flight; avoids a second scan
+				ids = append(ids, id)
+			}
+		}
+	}
 	for _, is := range a.snap.Issues {
 		if is.Closed() {
 			continue
 		}
 		for _, s := range sessions(is) {
-			if _, live := a.herdr[s.id]; !live {
-				if _, known := a.sessionNames[s.id]; !known {
-					a.sessionNames[s.id] = sessionInfo{} // in flight; avoids a second scan
-					ids = append(ids, s.id)
-				}
-			}
+			want(s.id)
 		}
+	}
+	for _, g := range a.agents() {
+		want(g.id)
 	}
 	if len(ids) == 0 {
 		return nil
