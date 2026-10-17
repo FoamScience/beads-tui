@@ -62,7 +62,7 @@ workspace = "game"
 	d := &Dispatch{state: &state{}, rep: dispatch.Report{Cfg: cfg, Snap: s, Lanes: dispatch.Lanes(cfg, s, panes, dispatch.Allow{})}}
 	lines := d.renderLanes()
 	want := -1
-	for _, l := range lines[:len(lines)-1] {
+	for _, l := range lines[:len(lines)-2] { // the last two are the legend
 		if strings.HasPrefix(l, "      ") {
 			continue // a lane's fit line
 		}

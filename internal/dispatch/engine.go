@@ -154,6 +154,7 @@ type LaneView struct {
 	Active string      // an in_progress bead the lane is working
 	Queue  []*bd.Issue // queued and unblocked partial beads in dispatch order, allowed or not
 	Count  map[Progress]int
+	Top    int // highest priority (lowest number) among its open beads, -1 when it has none
 }
 
 // Lanes builds every lane's view. A bead assigned to a lane belongs to it whatever its routing says.
@@ -162,7 +163,7 @@ func Lanes(c *Config, s *bd.Snapshot, panes []Pane, a Allow) map[string]*LaneVie
 	vs := map[string]*LaneView{}
 	for name, l := range c.Lanes {
 		p, live := LanePane(panes, name)
-		vs[name] = &LaneView{Lane: l, Pane: p, Live: live, Count: map[Progress]int{}}
+		vs[name] = &LaneView{Lane: l, Pane: p, Live: live, Count: map[Progress]int{}, Top: -1}
 	}
 	for _, is := range s.Issues {
 		lane := Route(c, s, is)
@@ -174,6 +175,9 @@ func Lanes(c *Config, s *bd.Snapshot, panes []Pane, a Allow) map[string]*LaneVie
 		}
 		v, st := vs[lane], StateOf(s, is)
 		v.Count[st]++
+		if st != Completed && st != Other && (v.Top < 0 || is.Priority < v.Top) {
+			v.Top = is.Priority
+		}
 		switch {
 		case st == InProgress:
 			v.Active = is.ID
