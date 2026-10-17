@@ -3,6 +3,7 @@ package ui
 import (
 	"cmp"
 	"fmt"
+	"image/color"
 	"slices"
 	"strings"
 	"time"
@@ -381,7 +382,8 @@ func (d *Dispatch) renderLanes() []string {
 	for i, s := range laneStates {
 		legend[i] = s.style.Render("▰") + " " + sDim.Render(s.label)
 	}
-	return append(out, "  "+strings.Join(legend, "  ")+"  "+sWarn.Render("stalled")+sDim.Render(" = idle pane holding a claimed bead"))
+	out = append(out, "  "+strings.Join(legend, "  ")+"  "+sWarn.Render("stalled")+sDim.Render(" = idle pane holding a claimed bead"))
+	return append(out, "  "+sDim.Render("lane colour = its highest open priority: ")+lanePrio(0).Render(" P0 ")+" "+lanePrio(1).Render(" P1 ")+" "+lanePrio(2).Render(" P2 ")+" "+lanePrio(3).Render(" P3 ")+" "+lanePrio(4).Render(" P4+ "))
 }
 
 // laneFit describes the work a lane suits, from what the decider and the routing rules go by.
@@ -425,11 +427,16 @@ func (d *Dispatch) laneLine(cursor string, v *dispatch.LaneView) string {
 	if slices.Contains(d.rep.Allow.Lanes, name) {
 		allow = sOK.Render("whole lane")
 	}
+	if v.Top >= 0 {
+		name = lanePrio(v.Top).Render(" " + name + " ")
+	} else {
+		name = " " + name + " "
+	}
 	if v.Lane.Auto {
 		name += sDim.Render(" auto")
 	}
 	counts, done, total := laneCounts(v)
-	return cursor + " " + laneCells(0, "  "+name, pane, status, cmp.Or(v.Active, "-"), next,
+	return cursor + " " + laneCells(0, " "+name, pane, status, cmp.Or(v.Active, "-"), next,
 		stackedBar(counts, laneBarCols), fmt.Sprintf("%d/%d", done, total), allow)
 }
 
@@ -470,6 +477,15 @@ func laneCounts(v *dispatch.LaneView) (counts []int, done, total int) {
 }
 
 const laneBarCols = 20
+
+// lanePrio colours a lane name by its highest open priority: P0-P3 each get a colour, lower is dim grey.
+func lanePrio(p int) lipgloss.Style {
+	c := []color.Color{cRed, cYellow, cMagenta, cBlue}
+	if p < 0 || p >= len(c) {
+		return lipgloss.NewStyle().Foreground(cGray).Reverse(true).Faint(true)
+	}
+	return lipgloss.NewStyle().Bold(p <= 1).Foreground(c[p]).Reverse(true)
+}
 
 // laneStates is the order and colour of a lane's progress bar segments.
 var laneStates = []struct {
