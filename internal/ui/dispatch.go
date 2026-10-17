@@ -23,16 +23,20 @@ type Dispatch struct {
 	events  []string
 	w, h    int
 	inQueue bool // focus on the selected lane's queue instead of the lanes table
-	lane    int
+	row     int  // index into rows()
 	bead    int
 	msg     string
 	at      time.Time
 	modal   *modal
+	state   *state
 }
+
+// laneRow is a line of the lanes table: a group header when lane is "", else one lane.
+type laneRow struct{ group, lane string }
 
 type stepMsg dispatch.Report
 
-func NewDispatch(e *dispatch.Engine) *Dispatch { return &Dispatch{eng: e} }
+func NewDispatch(e *dispatch.Engine) *Dispatch { return &Dispatch{eng: e, state: loadState()} }
 
 func (d *Dispatch) step() tea.Cmd {
 	return func() tea.Msg { return stepMsg(d.eng.Step()) }
@@ -82,13 +86,50 @@ func (d *Dispatch) lanes() []string {
 	return d.rep.Cfg.Names()
 }
 
-func (d *Dispatch) selLane() *dispatch.LaneView {
-	names := d.lanes()
-	if len(names) == 0 {
-		return nil
+// groups maps each group to its lanes, both sorted.
+func (d *Dispatch) groups() ([]string, map[string][]string) {
+	byGroup := map[string][]string{}
+	for _, name := range d.lanes() {
+		g := d.rep.Cfg.Lanes[name].GroupName()
+		byGroup[g] = append(byGroup[g], name)
 	}
-	d.lane = clamp(d.lane, 0, len(names)-1)
-	return d.rep.Lanes[names[d.lane]]
+	names := make([]string, 0, len(byGroup))
+	for g := range byGroup {
+		names = append(names, g)
+	}
+	slices.Sort(names)
+	return names, byGroup
+}
+
+func (d *Dispatch) rows() []laneRow {
+	names, byGroup := d.groups()
+	var rows []laneRow
+	for _, g := range names {
+		rows = append(rows, laneRow{group: g})
+		if !slices.Contains(d.state.Collapsed, g) {
+			for _, l := range byGroup[g] {
+				rows = append(rows, laneRow{g, l})
+			}
+		}
+	}
+	return rows
+}
+
+func (d *Dispatch) selRow() (laneRow, bool) {
+	rows := d.rows()
+	if len(rows) == 0 {
+		return laneRow{}, false
+	}
+	d.row = clamp(d.row, 0, len(rows)-1)
+	return rows[d.row], true
+}
+
+// selLane is the lane under the cursor, nil on a group header.
+func (d *Dispatch) selLane() *dispatch.LaneView {
+	if r, ok := d.selRow(); ok && r.lane != "" {
+		return d.rep.Lanes[r.lane]
+	}
+	return nil
 }
 
 func (d *Dispatch) selBead() *bd.Issue {
@@ -115,8 +156,19 @@ func (d *Dispatch) key(k string) tea.Cmd {
 		d.move(1)
 	case "k", "up":
 		d.move(-1)
+	case "enter":
+		if r, ok := d.selRow(); ok && r.lane == "" && !d.inQueue {
+			d.state.Collapsed = dispatch.Toggle(d.state.Collapsed, r.group)
+			if err := d.state.save(); err != nil {
+				d.msg = "state: " + err.Error()
+			}
+		}
 	case "space":
 		v := d.selLane()
+		if r, ok := d.selRow(); ok && r.lane == "" && !d.inQueue {
+			d.allowGroup(r.group)
+			return nil
+		}
 		switch {
 		case v == nil:
 		case !d.inQueue:
@@ -141,6 +193,23 @@ func (d *Dispatch) key(k string) tea.Cmd {
 		return tea.ExecProcess(editorCmd(dispatch.AllowPath()), func(err error) tea.Msg { return editDoneMsg{"dispatch.toml", err} })
 	}
 	return nil
+}
+
+// allowGroup allows every lane in the group, or disallows them all when all are already allowed.
+func (d *Dispatch) allowGroup(g string) {
+	_, byGroup := d.groups()
+	lanes := byGroup[g]
+	all := true
+	for _, l := range lanes {
+		all = all && slices.Contains(d.rep.Allow.Lanes, l)
+	}
+	d.edit(func(a *dispatch.Allow) {
+		for _, l := range lanes {
+			if has := slices.Contains(a.Lanes, l); has == all {
+				a.Lanes = dispatch.Toggle(a.Lanes, l)
+			}
+		}
+	}, "group "+g)
 }
 
 // deleteLane asks before removing a lane that has no open beads and nothing sent to it.
@@ -198,9 +267,9 @@ func (d *Dispatch) move(n int) {
 		d.selBead()
 		return
 	}
-	d.lane += n
+	d.row += n
 	d.bead = 0
-	d.selLane()
+	d.selRow()
 }
 
 // edit rewrites dispatch.toml from the file on disk, not the last tick's copy, so a hand edit is never lost.
@@ -269,43 +338,21 @@ func (d *Dispatch) render() string {
 }
 
 func (d *Dispatch) renderLanes() []string {
-	const row = "%s %-14s %-7s %-8s %-16s %-16s %s %7s  %s"
-	out := []string{sDim.Render(fmt.Sprintf(row, " ", "LANE", "PANE", "STATUS", "ACTIVE", "NEXT", padRight("PROGRESS", laneBarCols), "DONE", "ALLOWED"))}
-	for i, name := range d.lanes() {
-		v := d.rep.Lanes[name]
-		pane, status := "-", "gone"
-		if v.Live {
-			pane, status = v.Pane.ID, v.Pane.Status
-		}
-		next, allowed := "-", 0
-		for _, is := range v.Queue {
-			if d.rep.Allow.Permits(d.rep.Snap, is, name) {
-				if allowed == 0 {
-					next = is.ID
-				}
-				allowed++
-			}
-		}
-		allow := fmt.Sprintf("%d of %d", allowed, len(v.Queue))
-		if slices.Contains(d.rep.Allow.Lanes, name) {
-			allow = sOK.Render("whole lane")
-		}
+	const row = "%s %-14s %-7s %s %-16s %-16s %s %7s  %s"
+	out := []string{sDim.Render(fmt.Sprintf(row, " ", "LANE", "PANE", padRight("STATUS", 8), "ACTIVE", "NEXT", padRight("PROGRESS", laneBarCols), "DONE", "ALLOWED"))}
+	_, byGroup := d.groups()
+	for i, r := range d.rows() {
 		cursor := " "
-		if i == d.lane {
+		if i == d.row {
 			cursor = sAccent.Render("▶")
 		}
-		counts := make([]int, len(laneStates))
-		total := 0
-		for i, s := range laneStates {
-			counts[i] = v.Count[s.state]
-			total += counts[i]
+		var line string
+		if r.lane == "" {
+			line = d.groupLine(cursor, r.group, byGroup[r.group])
+		} else {
+			line = d.laneLine(row, cursor, d.rep.Lanes[r.lane])
 		}
-		line := fmt.Sprintf(row, cursor, name, pane, status, cmp.Or(v.Active, "-"), next,
-			stackedBar(counts, laneBarCols), fmt.Sprintf("%d/%d", v.Count[dispatch.Completed], total), allow)
-		if v.Lane.Auto {
-			line += sDim.Render("  auto")
-		}
-		if i == d.lane && !d.inQueue {
+		if i == d.row && !d.inQueue {
 			line = sSel.Render(line)
 		}
 		out = append(out, line)
@@ -314,7 +361,71 @@ func (d *Dispatch) renderLanes() []string {
 	for i, s := range laneStates {
 		legend[i] = s.style.Render("▰") + " " + sDim.Render(s.label)
 	}
-	return append(out, "  "+strings.Join(legend, "  "))
+	return append(out, "  "+strings.Join(legend, "  ")+"  "+sWarn.Render("stalled")+sDim.Render(" = idle pane holding a claimed bead"))
+}
+
+func (d *Dispatch) laneLine(row, cursor string, v *dispatch.LaneView) string {
+	name := v.Lane.Name
+	pane, status := "-", sDim.Render(padRight("gone", 8))
+	switch {
+	case !v.Live:
+	case v.Pane.Status == "idle" && v.Active != "":
+		pane, status = v.Pane.ID, sWarn.Render(padRight("stalled", 8))
+	default:
+		pane, status = v.Pane.ID, padRight(v.Pane.Status, 8)
+	}
+	next, allowed := "-", 0
+	for _, is := range v.Queue {
+		if d.rep.Allow.Permits(d.rep.Snap, is, name) {
+			if allowed == 0 {
+				next = is.ID
+			}
+			allowed++
+		}
+	}
+	allow := fmt.Sprintf("%d of %d", allowed, len(v.Queue))
+	if slices.Contains(d.rep.Allow.Lanes, name) {
+		allow = sOK.Render("whole lane")
+	}
+	counts, done, total := laneCounts(v)
+	line := fmt.Sprintf(row, cursor, "  "+name, pane, status, cmp.Or(v.Active, "-"), next,
+		stackedBar(counts, laneBarCols), fmt.Sprintf("%d/%d", done, total), allow)
+	if v.Lane.Auto {
+		line += sDim.Render("  auto")
+	}
+	return line
+}
+
+// groupLine sums the group's lanes into one bar.
+func (d *Dispatch) groupLine(cursor, g string, lanes []string) string {
+	sum := make([]int, len(laneStates))
+	done, total, allowed := 0, 0, 0
+	for _, l := range lanes {
+		c, dn, tt := laneCounts(d.rep.Lanes[l])
+		for i := range c {
+			sum[i] += c[i]
+		}
+		done, total = done+dn, total+tt
+		if slices.Contains(d.rep.Allow.Lanes, l) {
+			allowed++
+		}
+	}
+	fold := "▾"
+	if slices.Contains(d.state.Collapsed, g) {
+		fold = "▸"
+	}
+	head := padRight(fmt.Sprintf("%s %s", fold, g), 15) + sDim.Render(padRight(plural(len(lanes), "lane"), 51))
+	return fmt.Sprintf("%s %s %s %7s  %s", cursor, sSection.Render(head), stackedBar(sum, laneBarCols),
+		fmt.Sprintf("%d/%d", done, total), sDim.Render(fmt.Sprintf("%d of %s", allowed, plural(len(lanes), "lane"))))
+}
+
+func laneCounts(v *dispatch.LaneView) (counts []int, done, total int) {
+	counts = make([]int, len(laneStates))
+	for i, s := range laneStates {
+		counts[i] = v.Count[s.state]
+		total += counts[i]
+	}
+	return counts, v.Count[dispatch.Completed], total
 }
 
 const laneBarCols = 20
@@ -381,6 +492,10 @@ func barCells(counts []int, width int) []int {
 func (d *Dispatch) renderQueue() []string {
 	v := d.selLane()
 	if v == nil {
+		if r, ok := d.selRow(); ok {
+			_, byGroup := d.groups()
+			return []string{sSection.Render(r.group + " group"), sDim.Render("  " + strings.Join(byGroup[r.group], ", "))}
+		}
 		return nil
 	}
 	title := sSection.Render(v.Lane.Name + " queue")
@@ -391,7 +506,7 @@ func (d *Dispatch) renderQueue() []string {
 	if len(v.Queue) == 0 {
 		return append(out, sDim.Render("  nothing queued"))
 	}
-	room := max(3, (d.h-len(d.lanes())-8)/2)
+	room := max(3, (d.h-len(d.rows())-8)/2)
 	start := clamp(d.bead-room/2, 0, max(0, len(v.Queue)-room))
 	for i, is := range v.Queue[start:min(len(v.Queue), start+room)] {
 		i += start
@@ -431,5 +546,15 @@ func (d *Dispatch) hints() string {
 	if d.inQueue {
 		return strings.Join([]string{k("space", "allow bead"), k("e", "allow its epic"), k("tab", "lanes"), k("E", "edit dispatch.toml"), k("q", "quit")}, "  ")
 	}
+	if r, ok := d.selRow(); ok && r.lane == "" {
+		return strings.Join([]string{k("enter", "fold group"), k("space", "allow all its lanes"), k("j/k", "move"), k("E", "edit dispatch.toml"), k("q", "quit")}, "  ")
+	}
 	return strings.Join([]string{k("space", "allow whole lane"), k("tab", "queue"), k("j/k", "move"), k("D", "delete lane"), k("E", "edit dispatch.toml"), k("q", "quit")}, "  ")
+}
+
+func plural(n int, word string) string {
+	if n == 1 {
+		return "1 " + word
+	}
+	return fmt.Sprintf("%d %ss", n, word)
 }

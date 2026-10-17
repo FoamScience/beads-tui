@@ -21,10 +21,22 @@ type Lane struct {
 	About     string   `toml:"about"` // what the lane works on, for the decider
 	Cwd       string   `toml:"cwd"`
 	Workspace string   `toml:"workspace"` // herdr workspace label to start the lane in when its session is gone
+	Group     string   `toml:"group"`     // bt dispatch groups lanes by this, else by workspace
 	Takes     Takes    `toml:"takes"`
 	Owns      []string `toml:"owns"`
 	Revive    string   `toml:"revive"` // "fresh" (default) or "resume"
 	Model     string   `toml:"model"`
+}
+
+// GroupName is the lane's group in bt dispatch: group, else workspace, else "other".
+func (l *Lane) GroupName() string {
+	switch {
+	case l.Group != "":
+		return l.Group
+	case l.Workspace != "":
+		return l.Workspace
+	}
+	return "other"
 }
 
 type Takes struct {
