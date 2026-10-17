@@ -12,10 +12,9 @@ import (
 )
 
 const (
-	boxW   = 28
-	boxH   = 4
-	gapX   = 6
-	pitchY = boxH + 1
+	boxW = 32
+	boxH = 4 // shortest box: border, title, meta, border
+	gapX = 6
 )
 
 // gnode is a box in the layered layout; dummies carry long edges through intermediate layers.
@@ -24,6 +23,7 @@ type gnode struct {
 	is       *bd.Issue
 	layer    int
 	pos      int
+	y, h     int // canvas row and box height, set on each render
 	external bool
 	dummy    bool
 	edge     [2]string // dummy: the original prerequisite -> dependent edge
@@ -600,7 +600,7 @@ func (c *canvas) render(x0, y0, w, h int) string {
 	return b.String()
 }
 
-func nodeXY(n *gnode) (int, int) { return 2 + n.layer*(boxW+gapX), n.pos * pitchY }
+func nodeXY(n *gnode) (int, int) { return 2 + n.layer*(boxW+gapX), n.y }
 
 func statusStyle(s *bd.Snapshot, is *bd.Issue) int {
 	switch {
@@ -636,11 +636,31 @@ func (v *graphView) Render(a *App, w, h int) string {
 	if shown == 0 {
 		return head + "\n\n" + sDim.Render("  no open issues under this epic (H shows closed)")
 	}
-	maxPos := 0
+	// a row is as tall as its tallest box, so nodes at the same position line up across layers
+	var rowH []int
+	boxes := map[*gnode]graphBox{}
 	for _, l := range v.layers {
-		maxPos = max(maxPos, len(l))
+		for _, n := range l {
+			if len(rowH) <= n.pos {
+				rowH = append(rowH, make([]int, n.pos+1-len(rowH))...)
+			}
+			n.h = boxH
+			if !n.dummy {
+				b := v.box(a, n)
+				boxes[n] = b
+				n.h = 3 + len(b.title) + len(b.sessions)
+			}
+			rowH[n.pos] = max(rowH[n.pos], n.h)
+		}
 	}
-	cv := newCanvas(2+len(v.layers)*(boxW+gapX), maxPos*pitchY)
+	rowY := make([]int, len(rowH)+1)
+	for i, rh := range rowH {
+		rowY[i+1] = rowY[i] + rh + 1
+	}
+	for _, n := range v.nodes {
+		n.y = rowY[n.pos]
+	}
+	cv := newCanvas(2+len(v.layers)*(boxW+gapX), rowY[len(rowH)])
 	up, down := v.closure(v.sel, true), v.closure(v.sel, false)
 	hot := func(e gedge) bool {
 		p, d := e.orig[0], e.orig[1]
@@ -673,7 +693,7 @@ func (v *graphView) Render(a *App, w, h int) string {
 	for _, l := range v.layers {
 		for _, n := range l {
 			if !n.dummy {
-				v.drawBox(a, cv, n, up[n.id] || down[n.id])
+				v.drawBox(a, cv, n, boxes[n], up[n.id] || down[n.id])
 			}
 		}
 	}
@@ -690,8 +710,8 @@ func (v *graphView) Render(a *App, w, h int) string {
 		if y < v.offY {
 			v.offY = y
 		}
-		if y+boxH > v.offY+bodyH {
-			v.offY = y + boxH - bodyH
+		if y+sel.h > v.offY+bodyH {
+			v.offY = min(y+sel.h-bodyH, y)
 		}
 	}
 	v.offX = clamp(v.offX, 0, max(cv.w-w, 0))
@@ -699,7 +719,36 @@ func (v *graphView) Render(a *App, w, h int) string {
 	return head + "\n\n" + cv.render(v.offX, v.offY, w, bodyH)
 }
 
-func (v *graphView) drawBox(a *App, cv *canvas, n *gnode, related bool) {
+// graphBox is what a node shows: its title wrapped to the box, the id line, and one line per agent session.
+type graphBox struct {
+	title    []string
+	meta     string
+	sessions []graphLine
+}
+
+type graphLine struct {
+	text string
+	st   int
+}
+
+func (v *graphView) box(a *App, n *gnode) graphBox {
+	is := n.is
+	b := graphBox{title: strings.Split(ansi.Wrap(is.Title, boxW-6, " "), "\n")}
+	b.meta = fmt.Sprintf("%s P%d", a.shortID(is.ID), is.Priority)
+	if is.EstimatedMinutes > 0 {
+		b.meta += " " + minutes(is.EstimatedMinutes)
+	}
+	if n.external {
+		b.meta += " ext"
+	}
+	for _, s := range sessions(is) {
+		glyph, label, st := a.sessionBadge(s.id)
+		b.sessions = append(b.sessions, graphLine{glyph + " " + label, st})
+	}
+	return b
+}
+
+func (v *graphView) drawBox(a *App, cv *canvas, n *gnode, b graphBox, related bool) {
 	x, y := nodeXY(n)
 	is := n.is
 	border := stDim
@@ -717,8 +766,8 @@ func (v *graphView) drawBox(a *App, cv *canvas, n *gnode, related bool) {
 		tl, tr, bl, br, hz, vt = "┏", "┓", "┗", "┛", "━", "┃"
 	}
 	cv.text(x, y, tl+strings.Repeat(hz, boxW-2)+tr, border)
-	cv.text(x, y+boxH-1, bl+strings.Repeat(hz, boxW-2)+br, border)
-	for r := 1; r < boxH-1; r++ {
+	cv.text(x, y+n.h-1, bl+strings.Repeat(hz, boxW-2)+br, border)
+	for r := 1; r < n.h-1; r++ {
 		cv.text(x, y+r, vt+strings.Repeat(" ", boxW-2)+vt, border)
 	}
 	st := statusStyle(v.src(a), is)
@@ -734,13 +783,12 @@ func (v *graphView) drawBox(a *App, cv *canvas, n *gnode, related bool) {
 	if is.Closed() {
 		titleSt = stDim
 	}
-	cv.text(x+4, y+1, ansi.Truncate(is.Title, boxW-6, "…"), titleSt)
-	meta := fmt.Sprintf("%s P%d", a.shortID(is.ID), is.Priority)
-	if is.EstimatedMinutes > 0 {
-		meta += " " + minutes(is.EstimatedMinutes)
+	for i, l := range b.title {
+		cv.text(x+4, y+1+i, l, titleSt)
 	}
-	if n.external {
-		meta += " ext"
+	row := y + 1 + len(b.title)
+	cv.text(x+2, row, ansi.Truncate(b.meta, boxW-4, "…"), stDim)
+	for i, l := range b.sessions {
+		cv.text(x+2, row+1+i, ansi.Truncate(l.text, boxW-4, "…"), l.st)
 	}
-	cv.text(x+2, y+2, ansi.Truncate(meta, boxW-4, "…"), stDim)
 }
