@@ -373,12 +373,33 @@ func (d *Dispatch) renderLanes() []string {
 			line = sSel.Render(line)
 		}
 		out = append(out, line)
+		if r.lane != "" {
+			out = append(out, "      "+laneFit(d.rep.Cfg.Lanes[r.lane]))
+		}
 	}
 	legend := make([]string, len(laneStates))
 	for i, s := range laneStates {
 		legend[i] = s.style.Render("▰") + " " + sDim.Render(s.label)
 	}
 	return append(out, "  "+strings.Join(legend, "  ")+"  "+sWarn.Render("stalled")+sDim.Render(" = idle pane holding a claimed bead"))
+}
+
+// laneFit describes the work a lane suits, from what the decider and the routing rules go by.
+func laneFit(l *dispatch.Lane) string {
+	var parts []string
+	if l.About != "" {
+		parts = append(parts, l.About)
+	}
+	if len(l.Takes.Labels) > 0 {
+		parts = append(parts, "takes labels "+strings.Join(l.Takes.Labels, ", "))
+	}
+	if len(l.Takes.Epics) > 0 {
+		parts = append(parts, "takes epics "+strings.Join(l.Takes.Epics, ", "))
+	}
+	if len(parts) == 0 {
+		return sWarn.Render("no about in lanes.toml: the decider cannot route work here, only lane: labels can")
+	}
+	return sDim.Render(strings.Join(parts, " · "))
 }
 
 func (d *Dispatch) laneLine(cursor string, v *dispatch.LaneView) string {
@@ -526,7 +547,7 @@ func (d *Dispatch) renderQueue() []string {
 	if len(v.Queue) == 0 {
 		return append(out, sDim.Render("  nothing queued"))
 	}
-	room := max(3, (d.h-len(d.rows())-8)/2)
+	room := max(3, (d.h-2*len(d.rows())-8)/2)
 	start := clamp(d.bead-room/2, 0, max(0, len(v.Queue)-room))
 	for i, is := range v.Queue[start:min(len(v.Queue), start+room)] {
 		i += start
