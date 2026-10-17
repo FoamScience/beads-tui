@@ -1,8 +1,12 @@
 package ui
 
 import (
+	"github.com/FoamScience/beads-tui/internal/bd"
+	"github.com/FoamScience/beads-tui/internal/dispatch"
+	"github.com/charmbracelet/x/ansi"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -34,6 +38,42 @@ func TestBarCells(t *testing.T) {
 		got := barCells(c.counts, 20)
 		if !slices.Equal(got, c.want) {
 			t.Errorf("barCells(%v) = %v, want %v", c.counts, got, c.want)
+		}
+	}
+}
+
+func TestDispatchColumnsAlign(t *testing.T) {
+	cfg, err := dispatch.ParseConfig(`
+[lane.a-very-long-lane-name-indeed]
+cwd = "/x"
+workspace = "game"
+[lane.b]
+cwd = "/x"
+workspace = "game"
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := bd.NewSnapshot([]bd.Issue{
+		{ID: "tasks-i3g.163.7.12.4", Status: "in_progress", Assignee: "a-very-long-lane-name-indeed"},
+		{ID: "tasks-i3g.1", Status: "open", Labels: []string{"lane:b"}},
+	})
+	panes := []dispatch.Pane{{ID: "wP:p100", Agent: "claude", Status: "idle", Title: "a-very-long-lane-name-indeed"}}
+	d := &Dispatch{state: &state{}, rep: dispatch.Report{Cfg: cfg, Snap: s, Lanes: dispatch.Lanes(cfg, s, panes, dispatch.Allow{})}}
+	lines := d.renderLanes()
+	want := -1
+	for _, l := range lines[:len(lines)-1] {
+		plain := []rune(ansi.Strip(l))
+		at := slices.IndexFunc(plain, func(r rune) bool { return r == '▰' || r == '▱' })
+		if strings.Contains(string(plain), "PROGRESS") {
+			at = strings.Index(string(plain), "PROGRESS")
+			at = len([]rune(string(plain)[:at]))
+		}
+		if want == -1 {
+			want = at
+		}
+		if at != want {
+			t.Errorf("progress column at %d, want %d in %q", at, want, string(plain))
 		}
 	}
 }
