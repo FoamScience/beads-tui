@@ -337,9 +337,26 @@ func (d *Dispatch) render() string {
 	return strings.Join(out[:min(len(out), d.h)], "\n")
 }
 
+// laneCols are the lanes table's fixed widths: LANE PANE STATUS ACTIVE NEXT PROGRESS DONE ALLOWED.
+var laneCols = []int{16, 7, 8, 17, 17, laneBarCols, 7, 12}
+
+// laneCells lays out vals in laneCols from column start on; each is cut and padded to its width so nothing drifts.
+func laneCells(start int, vals ...string) string {
+	out := make([]string, len(vals))
+	for i, v := range vals {
+		c := start + i
+		v = ansi.Truncate(v, laneCols[c], "…")
+		if c == 6 {
+			out[i] = padLeft(v, laneCols[c])
+		} else {
+			out[i] = padRight(v, laneCols[c])
+		}
+	}
+	return strings.Join(out, " ")
+}
+
 func (d *Dispatch) renderLanes() []string {
-	const row = "%s %-14s %-7s %s %-16s %-16s %s %7s  %s"
-	out := []string{sDim.Render(fmt.Sprintf(row, " ", "LANE", "PANE", padRight("STATUS", 8), "ACTIVE", "NEXT", padRight("PROGRESS", laneBarCols), "DONE", "ALLOWED"))}
+	out := []string{sDim.Render("  " + laneCells(0, "LANE", "PANE", "STATUS", "ACTIVE", "NEXT", "PROGRESS", "DONE", "ALLOWED"))}
 	_, byGroup := d.groups()
 	for i, r := range d.rows() {
 		cursor := " "
@@ -350,7 +367,7 @@ func (d *Dispatch) renderLanes() []string {
 		if r.lane == "" {
 			line = d.groupLine(cursor, r.group, byGroup[r.group])
 		} else {
-			line = d.laneLine(row, cursor, d.rep.Lanes[r.lane])
+			line = d.laneLine(cursor, d.rep.Lanes[r.lane])
 		}
 		if i == d.row && !d.inQueue {
 			line = sSel.Render(line)
@@ -364,15 +381,15 @@ func (d *Dispatch) renderLanes() []string {
 	return append(out, "  "+strings.Join(legend, "  ")+"  "+sWarn.Render("stalled")+sDim.Render(" = idle pane holding a claimed bead"))
 }
 
-func (d *Dispatch) laneLine(row, cursor string, v *dispatch.LaneView) string {
+func (d *Dispatch) laneLine(cursor string, v *dispatch.LaneView) string {
 	name := v.Lane.Name
-	pane, status := "-", sDim.Render(padRight("gone", 8))
+	pane, status := "-", sDim.Render("gone")
 	switch {
 	case !v.Live:
 	case v.Pane.Status == "idle" && v.Active != "":
-		pane, status = v.Pane.ID, sWarn.Render(padRight("stalled", 8))
+		pane, status = v.Pane.ID, sWarn.Render("stalled")
 	default:
-		pane, status = v.Pane.ID, padRight(v.Pane.Status, 8)
+		pane, status = v.Pane.ID, v.Pane.Status
 	}
 	next, allowed := "-", 0
 	for _, is := range v.Queue {
@@ -387,16 +404,15 @@ func (d *Dispatch) laneLine(row, cursor string, v *dispatch.LaneView) string {
 	if slices.Contains(d.rep.Allow.Lanes, name) {
 		allow = sOK.Render("whole lane")
 	}
-	counts, done, total := laneCounts(v)
-	line := fmt.Sprintf(row, cursor, "  "+name, pane, status, cmp.Or(v.Active, "-"), next,
-		stackedBar(counts, laneBarCols), fmt.Sprintf("%d/%d", done, total), allow)
 	if v.Lane.Auto {
-		line += sDim.Render("  auto")
+		name += sDim.Render(" auto")
 	}
-	return line
+	counts, done, total := laneCounts(v)
+	return cursor + " " + laneCells(0, "  "+name, pane, status, cmp.Or(v.Active, "-"), next,
+		stackedBar(counts, laneBarCols), fmt.Sprintf("%d/%d", done, total), allow)
 }
 
-// groupLine sums the group's lanes into one bar.
+// groupLine sums the group's lanes into one bar; its title spans the LANE to NEXT columns.
 func (d *Dispatch) groupLine(cursor, g string, lanes []string) string {
 	sum := make([]int, len(laneStates))
 	done, total, allowed := 0, 0, 0
@@ -414,9 +430,13 @@ func (d *Dispatch) groupLine(cursor, g string, lanes []string) string {
 	if slices.Contains(d.state.Collapsed, g) {
 		fold = "▸"
 	}
-	head := padRight(fmt.Sprintf("%s %s", fold, g), 15) + sDim.Render(padRight(plural(len(lanes), "lane"), 51))
-	return fmt.Sprintf("%s %s %s %7s  %s", cursor, sSection.Render(head), stackedBar(sum, laneBarCols),
-		fmt.Sprintf("%d/%d", done, total), sDim.Render(fmt.Sprintf("%d of %s", allowed, plural(len(lanes), "lane"))))
+	span := 0
+	for _, w := range laneCols[:5] {
+		span += w + 1
+	}
+	title := padRight(ansi.Truncate(sSection.Render(fold+" "+g)+"  "+sDim.Render(plural(len(lanes), "lane")), span-1, "…"), span-1)
+	rest := laneCells(5, stackedBar(sum, laneBarCols), fmt.Sprintf("%d/%d", done, total), sDim.Render(fmt.Sprintf("%d of %s", allowed, plural(len(lanes), "lane"))))
+	return cursor + " " + title + " " + rest
 }
 
 func laneCounts(v *dispatch.LaneView) (counts []int, done, total int) {
@@ -518,7 +538,7 @@ func (d *Dispatch) renderQueue() []string {
 		if is.HasLabel(dispatch.LabelPartial) {
 			tag = sWarn.Render(" partial")
 		}
-		line := fmt.Sprintf("  %s %-18s %s%s %s", mark, is.ID, is.Title, tag, sDim.Render(why))
+		line := fmt.Sprintf("  %s %s %s%s %s", mark, padRight(ansi.Truncate(is.ID, 18, "…"), 18), is.Title, tag, sDim.Render(why))
 		if i == d.bead && d.inQueue {
 			line = sSel.Render("▶" + line[1:])
 		}
