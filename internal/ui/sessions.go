@@ -238,6 +238,15 @@ func (a *App) nameEndedSessions() tea.Cmd {
 	for _, g := range a.agents() {
 		want(g.id)
 	}
+	if gv, ok := a.views[a.viewIndex("Graph")].(*graphView); ok {
+		for _, n := range gv.nodes {
+			if n.is != nil {
+				for _, s := range sessions(n.is) {
+					want(s.id)
+				}
+			}
+		}
+	}
 	if len(ids) == 0 {
 		return nil
 	}

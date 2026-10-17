@@ -559,3 +559,22 @@ func TestAgentStripPacksColumnsByWidth(t *testing.T) {
 		t.Errorf("60 cols: %d agents on the first line, want 1", got)
 	}
 }
+
+func TestGraphWrapsTitlesAndShowsSessions(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.Update(tea.WindowSizeMsg{Width: 110, Height: 30})
+	issues := fixture()
+	issues[1].Title = "Active child with a fairly long title that should wrap over several lines inside the box"
+	issues[1].Metadata = []byte(`{"claude_session.aaaa_bbbb":"p"}`)
+	a.Update(snapshotMsg{issues: issues, gen: a.gen})
+	a.Update(herdrMsg{panes: map[string]agentPane{"aaaa-bbbb": {Status: "working", Title: "tm-tests"}}})
+	a.active = a.viewIndex("Graph")
+	a.views[a.active].(*graphView).setRoot(a, a.snap.ByID["t-a.1"])
+	out := ansi.Strip(a.render())
+	for _, want := range []string{"inside the box", "▶ tm-tests", "Ready child"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("graph lacks %q:\n%s", want, out)
+		}
+	}
+}
