@@ -53,14 +53,14 @@ Five views, one shared detail pane. Number keys switch views.
 | Key | View | Replaces |
 |---|---|---|
 | `1` | **Now**: in_progress, pinned, hooked, grouped by epic, live | `bd list --status ... -w` |
-| `2` | **Ready**: unblocked work, filter by machine/label/epic | `bd ready` |
-| `3` | **Epics**: tree with progress, blocked count, swarm lint result | `--type epic`, `--parent`, `swarm validate` loop |
-| `4` | **Triage**: hygiene violations, fixable inline | the jq one-liner, wl ref chores |
-| `5` | **Activity**: recent changes across the DB, newest first | scrolling agent output |
-| `6` | **Graph**: dependency DAG of an epic or issue, navigable | `bd graph`, `bd dep`, `bd blocked` |
+| `2` | **Activity**: recent changes across the DB, newest first; an agent strip on top (up to 3 per line, fewer on narrow terminals) lists live Claude sessions, plus ended ones that still hold an unclosed bead or were touched in the last 3 days, with closed/assigned beads (every bead whose `claude_session.*` metadata names it, closed ones included), a bar and the age of its latest update; it hides when herdr is unavailable | scrolling agent output |
+| `3` | **Ready**: unblocked work, filter by machine/label/epic | `bd ready` |
+| `4` / `i` | **Inbox**: beads an agent labelled `human`, pending first; `r` responds (comment + close), `X` dismisses; follows the same machine filter as Now and Ready (`M`: this machine by default, all, or one host), and the header badge counts what that filter shows; a human bead with no machine label shows under every filter | `bd human list/respond/dismiss` |
+| `5` | **Epics**: tree with progress, blocked count, swarm lint result | `--type epic`, `--parent`, `swarm validate` loop |
+| `6` / `b` | **Board**: kanban lanes Ready, Blocked, In progress, Deferred, Done (last 7 days), non-epic issues only; `h/l` columns, `j/k` cards, `H/L` move the card (or the marked cards) to the next lane, which sets its status; `E` scopes the board to one epic | `bd update --status`, close flow for Done |
 | `7` | **Molecules**: formulas, protos, live molecules and wisps | `bd formula`, `bd cook`, `bd mol pour/wisp/progress/squash/burn` |
-| `8` / `i` | **Inbox**: beads an agent labelled `human`, pending first; `r` responds (comment + close), `X` dismisses; follows the same machine filter as Now and Ready (`M`: this machine by default, all, or one host), and the header badge counts what that filter shows; a human bead with no machine label shows under every filter | `bd human list/respond/dismiss` |
-| `9` / `b` | **Board**: kanban lanes Ready, Blocked, In progress, Deferred, Done (last 7 days), non-epic issues only; `h/l` columns, `j/k` cards, `H/L` move the card (or the marked cards) to the next lane, which sets its status; `E` scopes the board to one epic | `bd update --status`, close flow for Done |
+| `8` | **Graph**: dependency DAG of an epic or issue, navigable | `bd graph`, `bd dep`, `bd blocked` |
+| `9` | **Triage**: hygiene violations (including open or in-progress non-epic beads no agent session has claimed), fixable inline | the jq one-liner, wl ref chores |
 | `0` | **Live**: live ledgers (status `pinned`, label `live`, machine-filtered) rendered as ledgers: summary, the Current state table as an aligned grid, the Log newest first with date chips, and the design field as a plain-text Runbook; a ⚠ line names any departure from the ledger format in the beads skill. `+` appends a dated log line and `E` edits the description in `$EDITOR`, both written back with `bd update --body-file -` | `bd update --body-file -` |
 
 `/` searches everywhere (title, id, labels). `Enter` opens detail. `g` on any row opens Graph rooted at its epic. `?` shows all keys.
@@ -113,11 +113,11 @@ Five views, one shared detail pane. Number keys switch views.
 
 The pane is a read-only pager with a vim cursor: `h j k l`, `w b e` and `W B E`, `0 ^ $`, `{ }`, `gg G` and counts (`5G`, `3w`), `H M L`, `ctrl+d/u/f/b`, `zz zt zb`, and `/` search with `n N`. The Live ledger pane takes the same keys once `tab` focuses it. Because `l`, `e` and `n` are motions here, the label, estimate and note actions move to `t`, `=` and `i` in the pane; `esc` goes back. Children, dependencies and dependents listed in the pane are links: `tab`/`shift+tab` move a cursor over them, `enter` opens one in the same pane, and `esc` walks back through the issues opened this way before closing the pane. Sections collapse with `Z`. Notes come newest first, since that is where agents leave their reasoning. Under the labels, a blocked issue shows its blocker chain (`waits on x.5 → x.3`), followed from its own blockers and then its ancestors' down to the first one that is free to move; list rows show the last link as `⊘ x.3`. A `time` line compares elapsed time (started to closed, wall clock) with the estimate, and parents roll this up over their closed descendants. An `Agent sessions` section lists the Claude sessions the herdr-bd-sessions hook recorded when an agent claimed the bead.
 
-### 3 Epics
+### 5 Epics
 
 Tree of epics, each with a progress bar, counts by status, and a lint badge from `bd swarm validate` (✓, or ⚠ with reversed edges, orphans, cycles). Lint runs lazily per epic and is cached until the epic changes. `Enter` expands children; `R` shows `bd ready --mol <epic>`.
 
-### 4 Triage
+### 9 Triage
 
 A checklist of rule violations, each row fixable in place:
 
@@ -168,7 +168,7 @@ Writes are optimistic: the row updates at once, and a failed command reverts it 
 
 Go + Bubble Tea + Lip Gloss + Bubbles + Glamour (markdown). Same language as bd, single binary, Glamour renders descriptions the way `bd show` already does.
 
-### 6 Graph
+### 8 Graph
 
 Layered DAG computed from the in-memory snapshot with the same layering as `bd graph` (longest path over blocking edges), so it updates live without another bd call. Layer 0 sits on the left; nodes in one column can run in parallel. Long edges pass through placeholder slots in the layers they skip, and a barycenter pass orders each column to keep lines straight. Nodes are compact boxes (status glyph, short title, id, priority, estimate) colored by status. Prerequisites outside the epic appear as dashed boxes. Only blocking edges are drawn; `related`, `discovered-from` and the rest are listed in the detail pane.
 

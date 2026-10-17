@@ -296,7 +296,7 @@ func (v *readyView) Hints() []string { return []string{"f filter", "M machine", 
 
 type activityView struct{ listView }
 
-func newActivity() *activityView { return &activityView{listView{empty: "no activity", bar: true}} }
+func newActivity() *activityView { return &activityView{listView{empty: "no activity"}} }
 
 func (v *activityView) Name() string { return "Activity" }
 
@@ -346,6 +346,12 @@ func dayLabel(t time.Time) string {
 
 func (v *activityView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 	return v.HandleKey(k.String()), nil
+}
+
+func (v *activityView) Render(a *App, w, h int) string {
+	bar := ansi.Truncate(fmt.Sprintf(" %s %s", sDim.Render("machine"), machineHint(a)), w, "…")
+	strip := a.renderAgents(w, h-2)
+	return bar + "\n\n" + strip + v.body(a, w, h-2-strings.Count(strip, "\n"))
 }
 
 func (v *activityView) Hints() []string { return []string{"[/] day"} }

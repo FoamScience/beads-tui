@@ -36,8 +36,8 @@ func TestViewsFitTerminal(t *testing.T) {
 				a.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 				a.Update(snapshotMsg{issues: fixture()})
 				a.active = tab
-				if tab == 5 {
-					a.views[5].(*graphView).setRoot(a, a.snap.ByID["t-a.1"])
+				if g, ok := a.views[tab].(*graphView); ok {
+					g.setRoot(a, a.snap.ByID["t-a.1"])
 				}
 				if enter {
 					a.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -492,5 +492,70 @@ func TestClickOnTabSwitchesView(t *testing.T) {
 	a.Update(tea.MouseClickMsg{X: 20, Y: 0, Button: tea.MouseLeft})
 	if a.active != 0 {
 		t.Fatal("no tab bar is drawn below the minimum size, so clicks must not switch tabs")
+	}
+}
+
+func TestActivityShowsAgentProgress(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	issues := fixture()
+	meta := []byte(`{"claude_session.aaaa_bbbb":"w1:p1"}`)
+	issues[1].Metadata, issues[2].Metadata, issues[4].Metadata = meta, meta, meta
+	a.Update(snapshotMsg{issues: issues, gen: a.gen})
+	a.active = a.viewIndex("Activity")
+	a.Update(herdrMsg{panes: map[string]agentPane{"aaaa-bbbb": {Pane: "w1:p1", Status: "working", Title: "tm-tests"}}})
+	if out := ansi.Strip(a.render()); !strings.Contains(out, "tm-tests  █") || !strings.Contains(out, "1/3") {
+		t.Fatalf("agent strip lacks progress:\n%s", out)
+	}
+	a.Update(herdrMsg{panes: map[string]agentPane{}})
+	if out := ansi.Strip(a.render()); !strings.Contains(out, "○ aaaa-bbb") || !strings.Contains(out, "1/3") {
+		t.Fatalf("ended recent agent missing from strip:\n%s", out)
+	}
+	stale := time.Now().Add(-30 * 24 * time.Hour)
+	for i := range issues {
+		issues[i].UpdatedAt = stale
+	}
+	a.Update(snapshotMsg{issues: issues, gen: a.gen})
+	if out := ansi.Strip(a.render()); !strings.Contains(out, "○ aaaa-bbb") {
+		t.Fatalf("ended agent holding open beads dropped once stale:\n%s", out)
+	}
+	issues[1].Status, issues[2].Status = "closed", "closed"
+	a.Update(snapshotMsg{issues: issues, gen: a.gen})
+	if out := ansi.Strip(a.render()); strings.Contains(out, "○ aaaa-bbb") {
+		t.Fatalf("stale agent with every bead closed still listed:\n%s", out)
+	}
+}
+
+func TestAgentStripPacksColumnsByWidth(t *testing.T) {
+	panes := map[string]agentPane{}
+	issues := fixture()
+	for i, id := range []string{"aaaa", "bbbb", "cccc", "dddd"} {
+		panes[id] = agentPane{Status: "idle", Title: "agent-" + id}
+		issues[1+i%3].Metadata = []byte(fmt.Sprintf(`{"claude_session.%s":"p"}`, id))
+		issues = append(issues, bd.Issue{ID: "t-s" + id, IssueType: "task", Status: "open", UpdatedAt: time.Now(),
+			Metadata: []byte(fmt.Sprintf(`{"claude_session.%s":"p"}`, id))})
+	}
+	perLine := func(w int) int {
+		a := New(bd.Client{Dir: t.TempDir()})
+		a.state, a.host = defaultState(), "u-host"
+		a.Update(tea.WindowSizeMsg{Width: w, Height: 40})
+		a.Update(snapshotMsg{issues: issues, gen: a.gen})
+		a.Update(herdrMsg{panes: panes})
+		for _, l := range strings.Split(ansi.Strip(a.renderAgents(w, 36)), "\n") {
+			if strings.Contains(l, "agent-") {
+				return strings.Count(l, "agent-")
+			}
+		}
+		return 0
+	}
+	if got := perLine(150); got != 3 {
+		t.Errorf("150 cols: %d agents on the first line, want 3", got)
+	}
+	if got := perLine(90); got != 2 {
+		t.Errorf("90 cols: %d agents on the first line, want 2", got)
+	}
+	if got := perLine(60); got != 1 {
+		t.Errorf("60 cols: %d agents on the first line, want 1", got)
 	}
 }
