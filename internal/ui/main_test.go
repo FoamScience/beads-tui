@@ -63,6 +63,9 @@ workspace = "game"
 	lines := d.renderLanes()
 	want := -1
 	for _, l := range lines[:len(lines)-1] {
+		if strings.HasPrefix(l, "      ") {
+			continue // a lane's fit line
+		}
 		plain := []rune(ansi.Strip(l))
 		at := slices.IndexFunc(plain, func(r rune) bool { return r == '▰' || r == '▱' })
 		if strings.Contains(string(plain), "PROGRESS") {
