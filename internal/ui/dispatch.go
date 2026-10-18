@@ -30,6 +30,9 @@ type Dispatch struct {
 	at      time.Time
 	modal   *modal
 	state   *state
+	graph   *graphView
+	graphOf string // the bead the graph was built for
+	graphOn bool   // the graph is on screen instead of the lanes
 }
 
 // laneRow is a line of the lanes table: a group header when lane is "", else one lane.
@@ -37,7 +40,9 @@ type laneRow struct{ group, lane string }
 
 type stepMsg dispatch.Report
 
-func NewDispatch(e *dispatch.Engine) *Dispatch { return &Dispatch{eng: e, state: loadState()} }
+func NewDispatch(e *dispatch.Engine) *Dispatch {
+	return &Dispatch{eng: e, state: loadState(), graph: &graphView{showClosed: true}}
+}
 
 func (d *Dispatch) step() tea.Cmd {
 	return func() tea.Msg { return stepMsg(d.eng.Step()) }
@@ -74,6 +79,10 @@ func (d *Dispatch) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				d.modal = nil
 			}
 			return d, cmd
+		}
+		if d.graphOn {
+			d.graphKey(msg)
+			return d, nil
 		}
 		return d, d.key(msg.String())
 	}
@@ -189,6 +198,12 @@ func (d *Dispatch) key(k string) tea.Cmd {
 	case "D":
 		if v := d.selLane(); v != nil && !d.inQueue {
 			d.deleteLane(v)
+		}
+	case "g":
+		if d.graphBead() == nil {
+			d.msg = "no running bead to graph here"
+		} else {
+			d.graphOn = true
 		}
 	case "E":
 		return tea.ExecProcess(editorCmd(dispatch.AllowPath()), func(err error) tea.Msg { return editDoneMsg{"dispatch.toml", err} })
@@ -309,16 +324,26 @@ func (d *Dispatch) render() string {
 		head += sDim.Render("  · tick " + d.at.Format("15:04:05"))
 	}
 	out := []string{head, ""}
-	if d.rep.Cfg == nil {
-		out = append(out, sWarn.Render("waiting for the first tick (or lanes.toml failed, see events)"))
-	} else {
+	switch {
+	case d.graphOn:
+		out = append(out, d.renderGraph(d.h-3)...)
+	case d.rep.Cfg == nil:
+		out = append(out, sWarn.Render("waiting for the first tick (or lanes.toml failed, see events)"), sRule.Render(strings.Repeat("─", d.w)))
+	default:
+		out = append(out, legend()...)
+		out = append(out, "")
 		out = append(out, d.renderLanes()...)
 		out = append(out, sRule.Render(strings.Repeat("─", d.w)))
-		out = append(out, d.renderQueue()...)
+		// the queue takes half the rows left under it (less its title, rule and the footer), the event log the rest
+		out = append(out, d.renderQueue(max(3, (d.h-len(out)-3)/2))...)
+		out = append(out, sRule.Render(strings.Repeat("─", d.w)))
 	}
-	out = append(out, sRule.Render(strings.Repeat("─", d.w)))
 	footer := d.hints()
-	if room := d.h - len(out) - 1; room > 0 {
+	if d.graphOn {
+		for len(out) < d.h-1 {
+			out = append(out, "")
+		}
+	} else if room := d.h - len(out) - 1; room > 0 {
 		ev := d.events[max(0, len(d.events)-room):]
 		for _, e := range ev {
 			out = append(out, sDim.Render(e))
@@ -338,8 +363,19 @@ func (d *Dispatch) render() string {
 	return strings.Join(out[:min(len(out), d.h)], "\n")
 }
 
+func graphPick(g *graphView, ok func(*bd.Issue) bool) string {
+	for _, l := range g.layers {
+		for _, n := range l {
+			if !n.dummy && ok(n.is) {
+				return n.id
+			}
+		}
+	}
+	return ""
+}
+
 // laneCols are the lanes table's fixed widths: LANE PANE STATUS ACTIVE NEXT PROGRESS DONE ALLOWED.
-var laneCols = []int{16, 7, 8, 17, 17, laneBarCols, 7, 12}
+var laneCols = []int{19, 7, 8, 17, 17, laneBarCols, 7, 12}
 
 // laneCells lays out vals in laneCols from column start on; each is cut and padded to its width so nothing drifts.
 func laneCells(start int, vals ...string) string {
@@ -378,12 +414,103 @@ func (d *Dispatch) renderLanes() []string {
 			out = append(out, "      "+laneFit(d.rep.Cfg.Lanes[r.lane]))
 		}
 	}
-	legend := make([]string, len(laneStates))
-	for i, s := range laneStates {
-		legend[i] = s.style.Render("▰") + " " + sDim.Render(s.label)
+	return out
+}
+
+func legend() []string {
+	return []string{
+		"  " + sDim.Render("progress = the active bead's children, else its parent's (never a top-level epic)") + "  " + sWarn.Render("stalled") + sDim.Render(" = idle pane holding a claimed bead"),
+		"  " + sDim.Render("lane colour = its highest open priority: ") + lanePrio(0).Render(" P0 ") + " " + lanePrio(1).Render(" P1 ") + " " + lanePrio(2).Render(" P2 ") + " " + lanePrio(3).Render(" P3 ") + " " + lanePrio(4).Render(" P4+ "),
 	}
-	out = append(out, "  "+strings.Join(legend, "  ")+"  "+sWarn.Render("stalled")+sDim.Render(" = idle pane holding a claimed bead"))
-	return append(out, "  "+sDim.Render("lane colour = its highest open priority: ")+lanePrio(0).Render(" P0 ")+" "+lanePrio(1).Render(" P1 ")+" "+lanePrio(2).Render(" P2 ")+" "+lanePrio(3).Render(" P3 ")+" "+lanePrio(4).Render(" P4+ "))
+}
+
+// scope is what a bead advances: its own children, else its parent's unless that is a top-level project epic, else just itself.
+func scope(s *bd.Snapshot, is *bd.Issue) *bd.Issue {
+	if len(s.Children[is.ID]) == 0 {
+		if p := s.ByID[is.Parent]; p != nil && p.Parent != "" {
+			return p
+		}
+	}
+	return is
+}
+
+func (d *Dispatch) activeScope(v *dispatch.LaneView) (id string, done, total int) {
+	is := d.rep.Snap.ByID[v.Active]
+	if is == nil {
+		return "", 0, 0
+	}
+	sc := scope(d.rep.Snap, is)
+	if len(d.rep.Snap.Children[sc.ID]) == 0 {
+		return sc.ID, 0, 1
+	}
+	done, total = d.rep.Snap.Progress(sc.ID)
+	return sc.ID, done, total
+}
+
+// graphBead is what the graph shows: the selected queue bead, else the selected lane's active bead.
+func (d *Dispatch) graphBead() *bd.Issue {
+	if d.inQueue {
+		return d.selBead()
+	}
+	if v := d.selLane(); v != nil {
+		return d.rep.Snap.ByID[v.Active]
+	}
+	return nil
+}
+
+// graphApp is the slice of App the Graph view reads: the snapshot and the lane sessions for its badges.
+func (d *Dispatch) graphApp() *App {
+	a := &App{snap: d.rep.Snap, herdr: map[string]agentPane{}}
+	for _, v := range d.rep.Lanes {
+		if v.Live && v.Pane.Session != "" {
+			a.herdr[v.Pane.Session] = agentPane{Pane: v.Pane.ID, Status: v.Pane.Status, Title: v.Lane.Name}
+		}
+	}
+	return a
+}
+
+// graphKey drives the full-screen graph: hjkl moves, H toggles closed beads, g/esc/q goes back.
+func (d *Dispatch) graphKey(k tea.KeyPressMsg) {
+	switch k.String() {
+	case "g", "esc", "q":
+		d.graphOn = false
+	case "h", "j", "k", "l", "left", "down", "up", "right", "H":
+		if d.graphBead() != nil {
+			d.graph.Update(d.graphApp(), k)
+		}
+	}
+}
+
+// renderGraph draws the bead's scope with bt's Graph view, the bead selected.
+func (d *Dispatch) renderGraph(h int) []string {
+	is := d.graphBead()
+	if is == nil {
+		return []string{sDim.Render("no running bead on this row to graph")}
+	}
+	g, a := d.graph, d.graphApp()
+	root := scope(d.rep.Snap, is).ID
+	if g.fixed != d.rep.Snap || g.rootID != root || d.graphOf != is.ID {
+		if g.rootID != root {
+			g.offX, g.offY = 0, 0
+		}
+		g.fixed, g.rootID, g.sel, d.graphOf = d.rep.Snap, root, is.ID, is.ID
+		g.Rebuild(a)
+		if g.nodes[is.ID] == nil { // the bead is the graphed parent: select the child being worked, else the first open one
+			if id := graphPick(g, func(c *bd.Issue) bool { return c.Status == "in_progress" }); id != "" {
+				g.sel = id
+			} else if id := graphPick(g, func(c *bd.Issue) bool { return !c.Closed() }); id != "" {
+				g.sel = id
+			}
+		}
+	}
+	return strings.Split(g.Render(a, d.w, h), "\n")
+}
+
+func scopeCells(done, total int) (bar, frac string) {
+	if total == 0 {
+		return sDim.Render(strings.Repeat("▱", laneBarCols)), "-"
+	}
+	return progressBar(done, total, laneBarCols), fmt.Sprintf("%d/%d", done, total)
 }
 
 // laneFit describes the work a lane suits, from what the decider and the routing rules go by.
@@ -435,21 +562,20 @@ func (d *Dispatch) laneLine(cursor string, v *dispatch.LaneView) string {
 	if v.Lane.Auto {
 		name += sDim.Render(" auto")
 	}
-	counts, done, total := laneCounts(v)
-	return cursor + " " + laneCells(0, " "+name, pane, status, cmp.Or(v.Active, "-"), next,
-		stackedBar(counts, laneBarCols), fmt.Sprintf("%d/%d", done, total), allow)
+	_, done, total := d.activeScope(v)
+	bar, frac := scopeCells(done, total)
+	return cursor + " " + laneCells(0, " "+name, pane, status, cmp.Or(v.Active, "-"), next, bar, frac, allow)
 }
 
-// groupLine sums the group's lanes into one bar; its title spans the LANE to NEXT columns.
+// groupLine sums the progress its lanes' active beads advance, each scope once; its title spans the LANE to NEXT columns.
 func (d *Dispatch) groupLine(cursor, g string, lanes []string) string {
-	sum := make([]int, len(laneStates))
 	done, total, allowed := 0, 0, 0
+	seen := map[string]bool{}
 	for _, l := range lanes {
-		c, dn, tt := laneCounts(d.rep.Lanes[l])
-		for i := range c {
-			sum[i] += c[i]
+		if id, dn, tt := d.activeScope(d.rep.Lanes[l]); id != "" && !seen[id] {
+			seen[id] = true
+			done, total = done+dn, total+tt
 		}
-		done, total = done+dn, total+tt
 		if slices.Contains(d.rep.Allow.Lanes, l) {
 			allowed++
 		}
@@ -463,17 +589,9 @@ func (d *Dispatch) groupLine(cursor, g string, lanes []string) string {
 		span += w + 1
 	}
 	title := padRight(ansi.Truncate(sSection.Render(fold+" "+g)+"  "+sDim.Render(plural(len(lanes), "lane")), span-1, "…"), span-1)
-	rest := laneCells(5, stackedBar(sum, laneBarCols), fmt.Sprintf("%d/%d", done, total), sDim.Render(fmt.Sprintf("%d of %s", allowed, plural(len(lanes), "lane"))))
+	bar, frac := scopeCells(done, total)
+	rest := laneCells(5, bar, frac, sDim.Render(fmt.Sprintf("%d of %s", allowed, plural(len(lanes), "lane"))))
 	return cursor + " " + title + " " + rest
-}
-
-func laneCounts(v *dispatch.LaneView) (counts []int, done, total int) {
-	counts = make([]int, len(laneStates))
-	for i, s := range laneStates {
-		counts[i] = v.Count[s.state]
-		total += counts[i]
-	}
-	return counts, v.Count[dispatch.Completed], total
 }
 
 const laneBarCols = 20
@@ -487,66 +605,7 @@ func lanePrio(p int) lipgloss.Style {
 	return lipgloss.NewStyle().Bold(p <= 1).Foreground(c[p]).Reverse(true)
 }
 
-// laneStates is the order and colour of a lane's progress bar segments.
-var laneStates = []struct {
-	state dispatch.Progress
-	label string
-	style lipgloss.Style
-}{
-	{dispatch.Completed, "done", sOK},
-	{dispatch.InProgress, "working", lipgloss.NewStyle().Foreground(cBlue)},
-	{dispatch.Partial, "partial", sWarn},
-	{dispatch.Queued, "queued", lipgloss.NewStyle()},
-	{dispatch.Waiting, "waiting on deps", sDim},
-}
-
-// stackedBar splits width cells across counts by largest remainder; a non-zero count always gets a cell when there is room.
-func stackedBar(counts []int, width int) string {
-	cells := barCells(counts, width)
-	var b strings.Builder
-	for i, n := range cells {
-		b.WriteString(laneStates[i].style.Render(strings.Repeat("▰", n)))
-	}
-	used := 0
-	for _, n := range cells {
-		used += n
-	}
-	return b.String() + sDim.Render(strings.Repeat("▱", width-used))
-}
-
-func barCells(counts []int, width int) []int {
-	total := 0
-	for _, c := range counts {
-		total += c
-	}
-	cells := make([]int, len(counts))
-	if total == 0 {
-		return cells
-	}
-	used := 0
-	rem := make([]int, len(counts))
-	for i, c := range counts {
-		cells[i], rem[i] = c*width/total, c*width%total
-		if c > 0 && cells[i] == 0 {
-			cells[i], rem[i] = 1, -1
-		}
-		used += cells[i]
-	}
-	for used > width { // minimum cells overflowed: take back from the largest segment
-		i := slices.Index(cells, slices.Max(cells))
-		cells[i]--
-		used--
-	}
-	for used < width {
-		i := slices.Index(rem, slices.Max(rem))
-		cells[i]++
-		rem[i] = -1
-		used++
-	}
-	return cells
-}
-
-func (d *Dispatch) renderQueue() []string {
+func (d *Dispatch) renderQueue(room int) []string {
 	v := d.selLane()
 	if v == nil {
 		if r, ok := d.selRow(); ok {
@@ -555,15 +614,12 @@ func (d *Dispatch) renderQueue() []string {
 		}
 		return nil
 	}
-	title := sSection.Render(v.Lane.Name + " queue")
-	if v.Active != "" {
-		title += sDim.Render("  working " + v.Active)
-	}
+	title := sSection.Render(v.Lane.Name+" queue") + sDim.Render(fmt.Sprintf("  %d queued · %d waiting on deps · %d partial · %d working · %d done",
+		v.Count[dispatch.Queued], v.Count[dispatch.Waiting], v.Count[dispatch.Partial], v.Count[dispatch.InProgress], v.Count[dispatch.Completed]))
 	out := []string{title}
 	if len(v.Queue) == 0 {
 		return append(out, sDim.Render("  nothing queued"))
 	}
-	room := max(3, (d.h-2*len(d.rows())-8)/2)
 	start := clamp(d.bead-room/2, 0, max(0, len(v.Queue)-room))
 	for i, is := range v.Queue[start:min(len(v.Queue), start+room)] {
 		i += start
@@ -600,13 +656,16 @@ func (d *Dispatch) hints() string {
 		return sWarn.Render(d.msg)
 	}
 	k := func(key, what string) string { return sKey.Render(key) + " " + sDim.Render(what) }
+	if d.graphOn {
+		return strings.Join([]string{k("hjkl", "move"), k("H", "closed"), k("g/esc", "back")}, "  ")
+	}
 	if d.inQueue {
-		return strings.Join([]string{k("space", "allow bead"), k("e", "allow its epic"), k("tab", "lanes"), k("E", "edit dispatch.toml"), k("q", "quit")}, "  ")
+		return strings.Join([]string{k("space", "allow bead"), k("e", "allow its epic"), k("g", "graph"), k("tab", "lanes"), k("E", "edit dispatch.toml"), k("q", "quit")}, "  ")
 	}
 	if r, ok := d.selRow(); ok && r.lane == "" {
 		return strings.Join([]string{k("enter", "fold group"), k("space", "allow all its lanes"), k("j/k", "move"), k("E", "edit dispatch.toml"), k("q", "quit")}, "  ")
 	}
-	return strings.Join([]string{k("space", "allow whole lane"), k("tab", "queue"), k("j/k", "move"), k("D", "delete lane"), k("E", "edit dispatch.toml"), k("q", "quit")}, "  ")
+	return strings.Join([]string{k("space", "allow whole lane"), k("g", "graph"), k("tab", "queue"), k("j/k", "move"), k("D", "delete lane"), k("E", "edit dispatch.toml"), k("q", "quit")}, "  ")
 }
 
 func plural(n int, word string) string {
