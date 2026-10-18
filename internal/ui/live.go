@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -116,11 +117,7 @@ func (v *liveView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 			// agents rewrite ledgers while work runs: append to the description bd holds now,
 			// not the copy this screen loaded, so a concurrent update is never overwritten
 			return func() tea.Msg {
-				cur, err := c.Show(id)
-				if err != nil {
-					return writeDoneMsg{desc, err}
-				}
-				return writeDoneMsg{desc, c.ExecInput(bd.AppendLog(cur.Description, day, t), "update", id, "--body-file", "-")}
+				return writeDoneMsg{desc, c.UpdateLedger(id, func(cur string) (string, error) { return bd.AppendLog(cur, day, t), nil })}
 			}
 		})
 	case "E":
@@ -174,14 +171,9 @@ func (v *liveView) Msg(a *App, msg tea.Msg) tea.Cmd {
 	a.pending++
 	c, id, path, desc := a.client, m.id, m.path, "ledger "+a.shortID(m.id)+" saved"
 	return func() tea.Msg {
-		cur, err := c.Show(id)
-		if err != nil {
-			return writeDoneMsg{desc, err}
-		}
-		if cur.Description != m.before {
+		if err := c.ReplaceLedger(id, m.before, after); errors.Is(err, bd.ErrLedgerStale) {
 			return writeDoneMsg{desc, fmt.Errorf("%s changed while you edited it; not saved, your version is in %s", id, path)}
-		}
-		if err := c.ExecInput(after, "update", id, "--body-file", "-"); err != nil {
+		} else if err != nil {
 			return writeDoneMsg{desc, fmt.Errorf("%w; your version is in %s", err, path)}
 		}
 		os.Remove(path)

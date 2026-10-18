@@ -374,9 +374,11 @@ func (d *Dispatch) render() string {
 		out = append(out, "")
 		out = append(out, d.renderLanes(len(out))...)
 		out = append(out, sRule.Render(strings.Repeat("─", d.w)))
-		// the queue takes half the rows left under it (less its title, rule and the footer), the event log the rest
-		out = append(out, d.renderQueue(max(3, (d.h-len(out)-3)/2))...)
+		ledgers := d.renderLedgers()
+		// the queue takes half the rows left under it (less its title, rule, the ledgers and the footer), the event log the rest
+		out = append(out, d.renderQueue(max(3, (d.h-len(out)-len(ledgers)-3)/2))...)
 		out = append(out, sRule.Render(strings.Repeat("─", d.w)))
+		out = append(out, ledgers...)
 	}
 	footer := d.hints()
 	if d.graphOn {
@@ -697,6 +699,49 @@ func (d *Dispatch) renderQueue(room int) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+// renderLedgers lists the live ledgers above the selected lane's (or group's) active and queued
+// beads: shared records any of those lanes may update, each with its latest log entry.
+func (d *Dispatch) renderLedgers() []string {
+	r, ok := d.selRow()
+	if !ok {
+		return nil
+	}
+	lanes := []string{r.lane}
+	if r.lane == "" {
+		_, byGroup := d.groups()
+		lanes = byGroup[r.group]
+	}
+	var ids []string
+	for _, name := range lanes {
+		v := d.rep.Lanes[name]
+		beads := v.Queue
+		if is := d.rep.Snap.ByID[v.Active]; is != nil {
+			beads = append([]*bd.Issue{is}, beads...)
+		}
+		for _, is := range beads {
+			for _, id := range dispatch.Ledgers(d.rep.Snap, is) {
+				if !slices.Contains(ids, id) {
+					ids = append(ids, id)
+				}
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	out := []string{sSection.Render("live ledgers") + sDim.Render("  shared by every lane, written with bt ledger checkout/commit")}
+	for _, id := range ids {
+		is := d.rep.Snap.ByID[id]
+		last := sDim.Render("no log yet")
+		if l := bd.ParseLedger(is.Description).Log; len(l) > 0 {
+			e := l[len(l)-1]
+			last = sDim.Render(dayAge(e.Date) + ": " + e.Text)
+		}
+		out = append(out, fmt.Sprintf("  %s %s  %s", padRight(ansi.Truncate(id, 18, "…"), 18), is.Title, last))
+	}
+	return append(out, sRule.Render(strings.Repeat("─", d.w)))
 }
 
 func (d *Dispatch) allowedBy(is *bd.Issue, lane string) string {
