@@ -24,24 +24,6 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func TestBarCells(t *testing.T) {
-	for _, c := range []struct {
-		counts []int
-		want   []int
-	}{
-		{[]int{0, 0, 0, 0, 0}, []int{0, 0, 0, 0, 0}},
-		{[]int{19, 0, 0, 1, 0}, []int{19, 0, 0, 1, 0}},
-		{[]int{100, 1, 0, 0, 0}, []int{19, 1, 0, 0, 0}},
-		{[]int{1, 1, 1, 0, 0}, []int{7, 7, 6, 0, 0}},
-		{[]int{5, 0, 0, 5, 10}, []int{5, 0, 0, 5, 10}},
-	} {
-		got := barCells(c.counts, 20)
-		if !slices.Equal(got, c.want) {
-			t.Errorf("barCells(%v) = %v, want %v", c.counts, got, c.want)
-		}
-	}
-}
-
 func TestDispatchColumnsAlign(t *testing.T) {
 	cfg, err := dispatch.ParseConfig(`
 [lane.a-very-long-lane-name-indeed]
@@ -62,7 +44,7 @@ workspace = "game"
 	d := &Dispatch{state: &state{}, rep: dispatch.Report{Cfg: cfg, Snap: s, Lanes: dispatch.Lanes(cfg, s, panes, dispatch.Allow{})}}
 	lines := d.renderLanes()
 	want := -1
-	for _, l := range lines[:len(lines)-2] { // the last two are the legend
+	for _, l := range lines {
 		if strings.HasPrefix(l, "      ") {
 			continue // a lane's fit line
 		}
@@ -77,6 +59,34 @@ workspace = "game"
 		}
 		if at != want {
 			t.Errorf("progress column at %d, want %d in %q", at, want, string(plain))
+		}
+	}
+}
+
+func TestActiveScope(t *testing.T) {
+	s := bd.NewSnapshot([]bd.Issue{
+		{ID: "p", IssueType: "epic", Status: "open"},
+		{ID: "p.1", Parent: "p", Status: "in_progress"},
+		{ID: "p.2", Parent: "p", Status: "open"},
+		{ID: "p.2.1", Parent: "p.2", Status: "closed"},
+		{ID: "p.2.2", Parent: "p.2", Status: "in_progress"},
+		{ID: "p.3", Parent: "p", Status: "in_progress"},
+		{ID: "p.3.1", Parent: "p.3", Status: "closed"},
+		{ID: "p.3.2", Parent: "p.3", Status: "open"},
+	})
+	d := &Dispatch{rep: dispatch.Report{Snap: s}}
+	for _, c := range []struct {
+		active, id  string
+		done, total int
+	}{
+		{"", "", 0, 0},
+		{"p.1", "p.1", 0, 1},   // parent is the top-level epic: the bead alone
+		{"p.2.2", "p.2", 1, 2}, // a leaf advances its parent
+		{"p.3", "p.3", 1, 2},   // a bead with children advances them
+	} {
+		id, done, total := d.activeScope(&dispatch.LaneView{Active: c.active})
+		if id != c.id || done != c.done || total != c.total {
+			t.Errorf("activeScope(%q) = %q %d/%d, want %q %d/%d", c.active, id, done, total, c.id, c.done, c.total)
 		}
 	}
 }
