@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/FoamScience/beads-tui/internal/bd"
@@ -158,6 +159,14 @@ type LaneView struct {
 	Top    int // highest priority (lowest number) among its open beads, -1 when it has none
 }
 
+// workText is what a lane is sent: /work and the bead, plus the live ledgers the bead may have to update.
+func workText(s *bd.Snapshot, is *bd.Issue) string {
+	if l := Ledgers(s, is); len(l) > 0 {
+		return "/work " + is.ID + " (live ledgers: " + strings.Join(l, ", ") + ")"
+	}
+	return "/work " + is.ID
+}
+
 // Lanes builds every lane's view. A bead assigned to a lane belongs to it whatever its routing says.
 // Only leaf beads are queued.
 func Lanes(c *Config, s *bd.Snapshot, panes []Pane, a Allow) map[string]*LaneView {
@@ -258,7 +267,7 @@ func Plan(c *Config, s *bd.Snapshot, panes []Pane, st *State, now time.Time) []A
 			continue
 		}
 		st.Sent[name] = sent{next.ID, now}
-		acts = append(acts, Action{Kind: Send, Lane: name, Bead: next.ID, Pane: p.ID, Text: "/work " + next.ID})
+		acts = append(acts, Action{Kind: Send, Lane: name, Bead: next.ID, Pane: p.ID, Text: workText(s, next)})
 		busy++
 	}
 	return acts

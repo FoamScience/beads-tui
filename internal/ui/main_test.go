@@ -105,6 +105,46 @@ workspace = "game"
 	}
 }
 
+func TestRenderLedgers(t *testing.T) {
+	cfg, err := dispatch.ParseConfig(`
+[lane.a]
+cwd = "/x"
+group = "g"
+[lane.b]
+cwd = "/x"
+group = "g"
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := bd.NewSnapshot([]bd.Issue{
+		{ID: "p", IssueType: "epic", Status: "open"},
+		{ID: "p.l", Parent: "p", Status: "pinned", Labels: []string{"live"}, Title: "ledger",
+			Description: "sum\n\n= Log =\n2026-10-01: first\n2026-10-02: latest"},
+		{ID: "p.1", Parent: "p", Status: "in_progress", Assignee: "a"},
+		{ID: "p.2", Parent: "p", Status: "open", Labels: []string{"lane:b"}},
+		{ID: "q", IssueType: "epic", Status: "open"},
+		{ID: "q.1", Parent: "q", Status: "open", Labels: []string{"lane:b"}},
+	})
+	d := &Dispatch{state: &state{}, rep: dispatch.Report{Cfg: cfg, Snap: s, Lanes: dispatch.Lanes(cfg, s, nil, dispatch.Allow{})}}
+	for row, want := range []int{1, 1, 1} { // group g, lane a (active), lane b (queued): p.l once each
+		d.row = row
+		lines := d.renderLedgers()
+		n := 0
+		for _, l := range lines {
+			if strings.Contains(ansi.Strip(l), "p.l ") {
+				n++
+				if !strings.Contains(ansi.Strip(l), "latest") {
+					t.Errorf("row %d: %q lacks the latest log entry", row, ansi.Strip(l))
+				}
+			}
+		}
+		if n != want {
+			t.Errorf("row %d: p.l listed %d times, want %d", row, n, want)
+		}
+	}
+}
+
 func TestActiveScope(t *testing.T) {
 	s := bd.NewSnapshot([]bd.Issue{
 		{ID: "p", IssueType: "epic", Status: "open"},

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -23,6 +24,11 @@ const usage = `usage:
   bt dispatch         send allowed beads to lane sessions; the screen edits the allow-list
   bt dispatch --dry-run
                       print lanes and what one tick would do
+  bt ledger checkout <id>
+                      copy a live ledger's description to a file to edit; prints its path
+  bt ledger commit <path>
+                      write the edited ledger back; exits 13, changing nothing,
+                      when another session updated it since the checkout
   bt --version        print the version`
 
 func main() {
@@ -60,6 +66,20 @@ func main() {
 		defer e.Close()
 		if _, err := tea.NewProgram(ui.NewDispatch(e)).Run(); err != nil {
 			fail(err)
+		}
+	case os.Args[1] == "ledger" && len(os.Args) == 4 && os.Args[2] == "checkout":
+		path, err := c.LedgerCheckout(os.Args[3])
+		if err != nil {
+			fail(err)
+		}
+		fmt.Println(path)
+	case os.Args[1] == "ledger" && len(os.Args) == 4 && os.Args[2] == "commit":
+		if err := c.LedgerCommit(os.Args[3]); err != nil {
+			fmt.Fprintln(os.Stderr, "bt:", err)
+			if errors.Is(err, bd.ErrLedgerStale) {
+				os.Exit(13)
+			}
+			os.Exit(1)
 		}
 	default:
 		fmt.Println(usage)
