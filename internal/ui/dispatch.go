@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"image/color"
+	"os/exec"
 	"slices"
 	"strings"
 	"time"
@@ -31,8 +32,11 @@ type Dispatch struct {
 	modal   *modal
 	state   *state
 	graph   *graphView
-	graphOf string // the bead the graph was built for
-	graphOn bool   // the graph is on screen instead of the lanes
+	graphOf string         // the bead the graph was built for
+	graphOn bool           // the graph is on screen instead of the lanes
+	laneAt  map[int]string // screen row -> lane drawn there, from the last render
+	click   tea.Mouse      // last left click, to spot a double click
+	clickAt time.Time
 }
 
 // laneRow is a line of the lanes table: a group header when lane is "", else one lane.
@@ -71,6 +75,10 @@ func (d *Dispatch) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			d.msg = "editor: " + msg.err.Error()
 		}
+	case flashMsg:
+		d.msg = msg.text
+	case tea.MouseClickMsg:
+		return d, d.mouseClick(msg.Mouse())
 	case tea.KeyPressMsg:
 		d.msg = ""
 		if d.modal != nil {
@@ -303,9 +311,41 @@ func (d *Dispatch) edit(f func(*dispatch.Allow), what string) {
 	d.rep.Allow, d.msg = a, "toggled "+what
 }
 
+// mouseClick focuses the herdr pane of the lane double-clicked in its LANE or PANE cell.
+func (d *Dispatch) mouseClick(m tea.Mouse) tea.Cmd {
+	if m.Button != tea.MouseLeft || d.modal != nil || d.graphOn {
+		return nil
+	}
+	double := m.X == d.click.X && m.Y == d.click.Y && time.Since(d.clickAt) < doubleClick
+	d.click, d.clickAt = m, time.Now()
+	from := 2 + laneCols[0] + 1
+	if !double || m.X < from || m.X >= from+laneCols[1]+1+laneCols[2] {
+		return nil
+	}
+	v := d.rep.Lanes[d.laneAt[m.Y]]
+	if v == nil {
+		return nil
+	}
+	if !v.Live {
+		d.msg = "lane " + v.Lane.Name + " has no live pane"
+		return nil
+	}
+	p := v.Pane
+	return func() tea.Msg {
+		if err := exec.Command("herdr", "workspace", "focus", p.Workspace).Run(); err != nil {
+			return flashMsg{text: "herdr: " + err.Error(), err: true}
+		}
+		_ = exec.Command("herdr", "tab", "focus", p.Tab).Run()
+		return flashMsg{text: "focused " + v.Lane.Name + " / pane " + p.ID}
+	}
+}
+
+const doubleClick = 400 * time.Millisecond
+
 func (d *Dispatch) View() tea.View {
 	v := tea.NewView(d.render())
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = "bt dispatch"
 	return v
 }
@@ -332,7 +372,7 @@ func (d *Dispatch) render() string {
 	default:
 		out = append(out, legend()...)
 		out = append(out, "")
-		out = append(out, d.renderLanes()...)
+		out = append(out, d.renderLanes(len(out))...)
 		out = append(out, sRule.Render(strings.Repeat("─", d.w)))
 		// the queue takes half the rows left under it (less its title, rule and the footer), the event log the rest
 		out = append(out, d.renderQueue(max(3, (d.h-len(out)-3)/2))...)
@@ -374,8 +414,8 @@ func graphPick(g *graphView, ok func(*bd.Issue) bool) string {
 	return ""
 }
 
-// laneCols are the lanes table's fixed widths: LANE PANE STATUS ACTIVE NEXT PROGRESS DONE ALLOWED.
-var laneCols = []int{19, 7, 8, 17, 17, laneBarCols, 7, 12}
+// laneCols are the lanes table's fixed widths: state symbol, LANE PANE ACTIVE NEXT PROGRESS DONE ALLOWED.
+var laneCols = []int{1, 19, 7, 17, 17, laneBarCols, 7, 12}
 
 // laneCells lays out vals in laneCols from column start on; each is cut and padded to its width so nothing drifts.
 func laneCells(start int, vals ...string) string {
@@ -392,8 +432,10 @@ func laneCells(start int, vals ...string) string {
 	return strings.Join(out, " ")
 }
 
-func (d *Dispatch) renderLanes() []string {
-	out := []string{sDim.Render("  " + laneCells(0, "LANE", "PANE", "STATUS", "ACTIVE", "NEXT", "PROGRESS", "DONE", "ALLOWED"))}
+// renderLanes draws the lanes table starting at screen row top, noting which lane sits on each row.
+func (d *Dispatch) renderLanes(top int) []string {
+	out := []string{sDim.Render("  " + laneCells(0, "", "LANE", "PANE", "ACTIVE", "NEXT", "PROGRESS", "DONE", "ALLOWED"))}
+	d.laneAt = map[int]string{}
 	_, byGroup := d.groups()
 	for i, r := range d.rows() {
 		cursor := " "
@@ -409,6 +451,9 @@ func (d *Dispatch) renderLanes() []string {
 		if i == d.row && !d.inQueue {
 			line = sSel.Render(line)
 		}
+		if r.lane != "" {
+			d.laneAt[top+len(out)] = r.lane
+		}
 		out = append(out, line)
 		if r.lane != "" {
 			out = append(out, "      "+laneFit(d.rep.Cfg.Lanes[r.lane]))
@@ -419,8 +464,8 @@ func (d *Dispatch) renderLanes() []string {
 
 func legend() []string {
 	return []string{
-		"  " + sDim.Render("progress = the active bead's children, else its parent's (never a top-level epic)") + "  " + sWarn.Render("stalled") + sDim.Render(" = idle pane holding a claimed bead"),
-		"  " + sDim.Render("lane colour = its highest open priority: ") + lanePrio(0).Render(" P0 ") + " " + lanePrio(1).Render(" P1 ") + " " + lanePrio(2).Render(" P2 ") + " " + lanePrio(3).Render(" P3 ") + " " + lanePrio(4).Render(" P4+ "),
+		"  " + paneStates[0].sym + sDim.Render(" working  ") + paneStates[1].sym + sDim.Render(" blocked  ") + paneStates[2].sym + sDim.Render(" idle  ") +
+			paneStates[3].sym + sDim.Render(" stalled (idle, holding a claimed bead)  ") + paneStates[4].sym + sDim.Render(" no pane    ") + lanePrio(0).Render(" P0 ") + " " + lanePrio(1).Render(" P1 ") + " " + lanePrio(2).Render(" P2 ") + " " + lanePrio(3).Render(" P3 ") + " " + lanePrio(4).Render(" P4+ "),
 	}
 }
 
@@ -533,13 +578,18 @@ func laneFit(l *dispatch.Lane) string {
 
 func (d *Dispatch) laneLine(cursor string, v *dispatch.LaneView) string {
 	name := v.Lane.Name
-	pane, status := "-", sDim.Render("gone")
+	pane, status := "-", paneStates[4].sym
 	switch {
 	case !v.Live:
 	case v.Pane.Status == "idle" && v.Active != "":
-		pane, status = v.Pane.ID, sWarn.Render("stalled")
+		pane, status = v.Pane.ID, paneStates[3].sym
 	default:
-		pane, status = v.Pane.ID, v.Pane.Status
+		pane, status = v.Pane.ID, sDim.Render("?")
+		for _, st := range paneStates[:3] {
+			if st.name == v.Pane.Status {
+				status = st.sym
+			}
+		}
 	}
 	next, allowed := "-", 0
 	for _, is := range v.Queue {
@@ -564,7 +614,7 @@ func (d *Dispatch) laneLine(cursor string, v *dispatch.LaneView) string {
 	}
 	_, done, total := d.activeScope(v)
 	bar, frac := scopeCells(done, total)
-	return cursor + " " + laneCells(0, " "+name, pane, status, cmp.Or(v.Active, "-"), next, bar, frac, allow)
+	return cursor + " " + laneCells(0, status, " "+name, pane, cmp.Or(v.Active, "-"), next, bar, frac, allow)
 }
 
 // groupLine sums the progress its lanes' active beads advance, each scope once; its title spans the LANE to NEXT columns.
@@ -595,6 +645,15 @@ func (d *Dispatch) groupLine(cursor, g string, lanes []string) string {
 }
 
 const laneBarCols = 20
+
+// paneStates are the lanes table's state symbols: herdr's working, blocked and idle, then stalled and no pane.
+var paneStates = []struct{ name, sym string }{
+	{"working", sOK.Render("●")},
+	{"blocked", sErr.Render("■")},
+	{"idle", sDim.Render("○")},
+	{"stalled", sWarn.Render("◐")},
+	{"gone", sDim.Render("·")},
+}
 
 // lanePrio colours a lane name by its highest open priority: P0-P3 each get a colour, lower is dim grey.
 func lanePrio(p int) lipgloss.Style {
