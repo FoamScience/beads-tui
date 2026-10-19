@@ -1,6 +1,7 @@
 package ui
 
 import (
+	tea "charm.land/bubbletea/v2"
 	"github.com/FoamScience/beads-tui/internal/bd"
 	"github.com/FoamScience/beads-tui/internal/dispatch"
 	"github.com/charmbracelet/x/ansi"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestMain points config and cache at a scratch directory, so no test can overwrite the
@@ -42,7 +44,7 @@ workspace = "game"
 	})
 	panes := []dispatch.Pane{{ID: "wP:p100", Agent: "claude", Status: "idle", Title: "a-very-long-lane-name-indeed"}}
 	d := &Dispatch{state: &state{}, rep: dispatch.Report{Cfg: cfg, Snap: s, Lanes: dispatch.Lanes(cfg, s, panes, dispatch.Allow{})}}
-	lines := d.renderLanes()
+	lines := d.renderLanes(0)
 	want := -1
 	for _, l := range lines {
 		if strings.HasPrefix(l, "      ") {
@@ -60,6 +62,46 @@ workspace = "game"
 		if at != want {
 			t.Errorf("progress column at %d, want %d in %q", at, want, string(plain))
 		}
+	}
+}
+
+func TestDispatchDoubleClickFocusesLane(t *testing.T) {
+	cfg, err := dispatch.ParseConfig(`
+[lane.a]
+cwd = "/x"
+workspace = "game"
+[lane.b]
+cwd = "/x"
+workspace = "game"
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := bd.NewSnapshot(nil)
+	panes := []dispatch.Pane{{ID: "wP:p1", Agent: "claude", Status: "working", Title: "a"}}
+	d := &Dispatch{state: &state{}, rep: dispatch.Report{Cfg: cfg, Snap: s, Lanes: dispatch.Lanes(cfg, s, panes, dispatch.Allow{})}}
+	d.renderLanes(5)
+	y := -1
+	for row, l := range d.laneAt {
+		if l == "a" {
+			y = row
+		}
+	}
+	if y < 5 {
+		t.Fatalf("lane a not placed on screen: %v", d.laneAt)
+	}
+	click := tea.Mouse{X: 5, Y: y, Button: tea.MouseLeft}
+	if d.mouseClick(click) != nil {
+		t.Error("a single click focused the pane")
+	}
+	if d.mouseClick(click) == nil {
+		t.Error("a double click on lane a did not focus its pane")
+	}
+	d.clickAt = time.Time{}
+	off := tea.Mouse{X: 40, Y: y, Button: tea.MouseLeft}
+	d.mouseClick(off)
+	if d.mouseClick(off) != nil {
+		t.Error("a double click outside LANE/PANE focused the pane")
 	}
 }
 

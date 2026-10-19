@@ -305,6 +305,7 @@ func listPanes() ([]Pane, error) {
 				Status string `json:"agent_status"`
 				Title  string `json:"terminal_title_stripped"`
 				WS     string `json:"workspace_id"`
+				Tab    string `json:"tab_id"`
 				Sess   *struct {
 					Value string `json:"value"`
 				} `json:"agent_session"`
@@ -316,7 +317,7 @@ func listPanes() ([]Pane, error) {
 	}
 	panes := make([]Pane, len(pl.Result.Panes))
 	for i, p := range pl.Result.Panes {
-		panes[i] = Pane{p.ID, p.Agent, p.Status, p.Title, p.WS, ""}
+		panes[i] = Pane{p.ID, p.Agent, p.Status, p.Title, p.WS, "", p.Tab}
 		if p.Sess != nil {
 			panes[i].Session = p.Sess.Value
 		}

@@ -53,6 +53,7 @@ type Pane struct {
 	Title     string
 	Workspace string
 	Session   string // Claude session uuid
+	Tab       string
 }
 
 // State is what the engine remembers between ticks, plus the allow-list read from dispatch.toml.
