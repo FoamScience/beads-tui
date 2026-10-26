@@ -21,7 +21,8 @@ var version = "dev" // set by make via -ldflags
 const usage = `usage:
   bt                  open the TUI
   bt triage [--json]  print hygiene violations (JSON for agents)
-  bt dispatch         send allowed beads to lane sessions; the screen edits the allow-list
+  bt dispatch         start a session per allowed bead, one bead per lane at a time;
+                      the screen edits the allow-list
   bt dispatch --dry-run
                       print lanes and what one tick would do
   bt ledger checkout <id>

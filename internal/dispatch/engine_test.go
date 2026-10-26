@@ -35,10 +35,10 @@ func TestParseConfig(t *testing.T) {
 	if got := c.Names(); strings.Join(got, ",") != "quests,story" {
 		t.Fatalf("names %v", got)
 	}
-	if l := c.Lanes["story"]; l.Name != "story" || l.Revive != "fresh" || strings.HasPrefix(l.Cwd, "~") {
+	if l := c.Lanes["story"]; l.Name != "story" || strings.HasPrefix(l.Cwd, "~") {
 		t.Fatalf("lane defaults not applied: %+v", l)
 	}
-	for _, bad := range []string{`[lane.x]` + "\nbogus = 1", `[lane.x]` + "\nrevive = \"later\""} {
+	for _, bad := range []string{`[lane.x]` + "\nbogus = 1", `[lane.x]` + "\nrevive = \"resume\""} {
 		if _, err := ParseConfig(bad); err == nil {
 			t.Errorf("accepted %q", bad)
 		}
@@ -87,10 +87,10 @@ func TestPlan(t *testing.T) {
 	issues := []bd.Issue{
 		{ID: "s.1", Status: "open", Priority: 1, Labels: []string{"area:story"}},
 		{ID: "s.2", Status: "open", Priority: 2, Labels: []string{"area:story"}},
-		{ID: "s.3", Status: "in_progress", Priority: 3, Labels: []string{"area:story", "partial"}},
+		{ID: "s.3", Status: "in_progress", Priority: 3, Assignee: "story", Labels: []string{"area:story", "partial"}},
 		{ID: "q.1", Status: "open", Labels: []string{"area:quests"}},
 	}
-	idle := []Pane{{ID: "p1", Agent: "claude", Status: "idle", Title: "story"}}
+	idle := []Pane{{ID: "p1", Agent: "claude", Status: "idle", Title: "s.3", Tab: "t1"}}
 	all := Allow{Lanes: []string{"story", "quests"}}
 	fresh := func(a Allow) *State { st := NewState(); st.Allow = a; return st }
 
@@ -100,14 +100,15 @@ func TestPlan(t *testing.T) {
 
 	st := fresh(all)
 	acts := Plan(c, bd.NewSnapshot(issues), idle, st, now)
-	if len(acts) != 2 || acts[0].Kind != Spawn || acts[0].Lane != "quests" || acts[1].Kind != Send || acts[1].Bead != "s.3" || acts[1].Pane != "p1" {
-		t.Fatalf("partial first and spawn missing lane: %v", acts)
+	if len(acts) != 2 || acts[0].Kind != Spawn || acts[0].Bead != "q.1" || acts[0].Text != "/work q.1 (lane: quests)" ||
+		acts[1].Kind != Send || acts[1].Bead != "s.3" || acts[1].Pane != "p1" {
+		t.Fatalf("partial bead not sent to its own session, or new bead not spawned: %v", acts)
 	}
 	if again := Plan(c, bd.NewSnapshot(issues), idle, st, now.Add(time.Second)); len(again) != 0 {
 		t.Fatalf("resent before pickup: %v", again)
 	}
 	late := Plan(c, bd.NewSnapshot(issues), idle, st, now.Add(pickupTimeout+time.Second))
-	if len(late) != 3 || late[0].Kind != Note || late[0].Lane != "quests" || late[1].Kind != Note || late[2].Bead != "s.3" {
+	if len(late) != 3 || late[0].Kind != Note || late[0].Bead != "q.1" || late[1].Kind != Note || late[2].Bead != "s.3" {
 		t.Fatalf("want spawn give-up, pickup timeout note and re-offer: %v", late)
 	}
 	if later := Plan(c, bd.NewSnapshot(issues), idle, st, now.Add(2*pickupTimeout)); len(later) != 0 {
@@ -116,22 +117,27 @@ func TestPlan(t *testing.T) {
 
 	issues[2].Status, issues[2].Labels = "closed", []string{"area:story"}
 	acts = Plan(c, bd.NewSnapshot(issues), idle, fresh(Allow{Lanes: []string{"story"}, Beads: []string{"s.2"}}), now)
-	if len(acts) != 1 || acts[0].Bead != "s.2" {
-		t.Fatalf("listed bead not ahead of priority: %v", acts)
+	if len(acts) != 2 || acts[0].Kind != Close || acts[0].Pane != "p1" || acts[0].Tab != "t1" || acts[1].Kind != Note || acts[1].Bead != "s.2" {
+		t.Fatalf("closed bead's session kept, or listed bead not ahead of priority: %v", acts)
 	}
-	acts = Plan(c, bd.NewSnapshot(issues), idle, fresh(Allow{Beads: []string{"s.2"}}), now)
-	if len(acts) != 1 || acts[0].Bead != "s.2" {
+	shared := append([]Pane{{ID: "p2", Agent: "zsh", Tab: "t1"}}, idle...)
+	if acts = Plan(c, bd.NewSnapshot(issues), shared, fresh(Allow{}), now); len(acts) != 1 || acts[0].Kind != Close || acts[0].Tab != "" {
+		t.Fatalf("closed a tab another pane shares: %v", acts)
+	}
+	c.Lanes["story"].Workspace = "game"
+	acts = Plan(c, bd.NewSnapshot(issues), nil, fresh(Allow{Beads: []string{"s.2"}}), now)
+	if len(acts) != 1 || acts[0].Kind != Spawn || acts[0].Bead != "s.2" {
 		t.Fatalf("a listed bead alone must go, and nothing else: %v", acts)
 	}
 
 	issues[0].Status, issues[0].Assignee = "in_progress", "story"
-	if acts = Plan(c, bd.NewSnapshot(issues), idle, fresh(all), now); len(acts) != 1 || acts[0].Kind != Spawn {
+	if acts = Plan(c, bd.NewSnapshot(issues), nil, fresh(all), now); len(acts) != 1 || acts[0].Lane != "quests" {
 		t.Fatalf("lane with active bead got more work: %v", acts)
 	}
 
 	c.MaxActive = 1
 	issues[0].Status, issues[0].Assignee = "open", ""
-	working := []Pane{{ID: "p1", Agent: "claude", Status: "working", Title: "story"}}
+	working := []Pane{{ID: "p1", Agent: "claude", Status: "working", Title: "s.1"}}
 	if acts = Plan(c, bd.NewSnapshot(issues), working, fresh(all), now); len(acts) != 0 {
 		t.Fatalf("max_active exceeded: %v", acts)
 	}
@@ -276,7 +282,7 @@ func TestDeleteLane(t *testing.T) {
 	if err := DeleteLane(path, "ghost", false); err == nil {
 		t.Fatal("deleted a lane that is not there")
 	}
-	l := &Lane{Name: "game-ui", Cwd: "/z", Revive: "fresh"}
+	l := &Lane{Name: "game-ui", Cwd: "/z"}
 	if err := SaveAutoLane(AutoPath(path), l); err != nil {
 		t.Fatal(err)
 	}

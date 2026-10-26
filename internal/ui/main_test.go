@@ -42,7 +42,7 @@ workspace = "game"
 		{ID: "tasks-i3g.163.7.12.4", Status: "in_progress", Assignee: "a-very-long-lane-name-indeed"},
 		{ID: "tasks-i3g.1", Status: "open", Labels: []string{"lane:b"}},
 	})
-	panes := []dispatch.Pane{{ID: "wP:p100", Agent: "claude", Status: "idle", Title: "a-very-long-lane-name-indeed"}}
+	panes := []dispatch.Pane{{ID: "wP:p100", Agent: "claude", Status: "idle", Title: "tasks-i3g.163.7.12.4"}}
 	d := &Dispatch{state: &state{}, rep: dispatch.Report{Cfg: cfg, Snap: s, Lanes: dispatch.Lanes(cfg, s, panes, dispatch.Allow{})}}
 	lines := d.renderLanes(0)
 	want := -1
@@ -77,8 +77,8 @@ workspace = "game"
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := bd.NewSnapshot(nil)
-	panes := []dispatch.Pane{{ID: "wP:p1", Agent: "claude", Status: "working", Title: "a"}}
+	s := bd.NewSnapshot([]bd.Issue{{ID: "a.1", Status: "in_progress", Assignee: "a"}})
+	panes := []dispatch.Pane{{ID: "wP:p1", Agent: "claude", Status: "working", Title: "a.1"}}
 	d := &Dispatch{state: &state{}, rep: dispatch.Report{Cfg: cfg, Snap: s, Lanes: dispatch.Lanes(cfg, s, panes, dispatch.Allow{})}}
 	d.renderLanes(5)
 	y := -1

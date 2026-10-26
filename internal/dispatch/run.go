@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -113,7 +114,7 @@ func (e *Engine) Step() Report {
 		return r
 	}
 	if !e.DryRun {
-		recordSessions(cfg, panes, e.sessions)
+		recordSessions(e.snap, panes, e.sessions)
 	}
 	if ask := Unrouted(cfg, e.snap, e.st.Allow, e.tried); len(ask) > 0 {
 		e.route(cfg, ask, logf)
@@ -124,7 +125,7 @@ func (e *Engine) Step() Report {
 		if e.DryRun {
 			continue
 		}
-		if err := execute(cfg, a); err != nil {
+		if err := e.execute(cfg, a); err != nil {
 			logf("  failed: %v", err)
 			delete(e.st.Sent, a.Lane)
 		}
@@ -209,23 +210,29 @@ func printLanes(out io.Writer, cfg *Config, vs map[string]*LaneView) {
 	w.Flush()
 }
 
-func execute(cfg *Config, a Action) error {
+func (e *Engine) execute(cfg *Config, a Action) error {
 	switch a.Kind {
 	case Send:
 		return herdr("pane", "run", a.Pane, a.Text)
 	case Spawn:
-		return spawn(cfg.Lanes[a.Lane])
+		return spawn(cfg.Lanes[a.Lane], a.Bead, e.sessions[a.Bead], a.Text)
+	case Close:
+		if a.Tab != "" {
+			return herdr("tab", "close", a.Tab)
+		}
+		return herdr("pane", "close", a.Pane)
 	}
 	return nil
 }
 
-// spawn opens a tab in the lane's workspace and starts its Claude session there.
-func spawn(l *Lane) error {
+// spawn opens a tab in the lane's workspace and starts a Claude session named after the bead there,
+// resuming the bead's last session when there is one, with prompt as its first message.
+func spawn(l *Lane, bead, session, prompt string) error {
 	ws, err := workspaceID(l.Workspace)
 	if err != nil {
 		return err
 	}
-	out, err := herdrOut("tab", "create", "--workspace", ws, "--cwd", l.Cwd, "--label", l.Name, "--no-focus")
+	out, err := herdrOut("tab", "create", "--workspace", ws, "--cwd", l.Cwd, "--label", bead, "--no-focus")
 	if err != nil {
 		return fmt.Errorf("herdr tab create: %w", err)
 	}
@@ -239,19 +246,20 @@ func spawn(l *Lane) error {
 	if err := json.Unmarshal(out, &r); err != nil || r.Result.Pane.ID == "" {
 		return fmt.Errorf("herdr tab create: no pane in %s", out)
 	}
-	cmd := "claude -n " + l.Name
-	if l.Revive == "resume" {
-		if id := loadSessions()[l.Name]; id != "" {
-			cmd = "claude --resume " + id
-		}
+	cmd := "claude -n " + bead
+	if session != "" {
+		cmd += " --resume " + session
 	}
 	if l.Model != "" {
 		cmd += " --model " + l.Model
 	}
-	return herdr("pane", "run", r.Result.Pane.ID, cmd)
+	return herdr("pane", "run", r.Result.Pane.ID, cmd+" "+shellQuote(prompt))
 }
 
-// sessions.json maps a lane to the last Claude session uuid seen running it, for revive = "resume".
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// sessions.json maps an open bead to the last Claude session uuid seen working it, so a bead offered
+// again (partial, or not picked up) resumes that session.
 func loadSessions() map[string]string {
 	m := map[string]string{}
 	if b, err := os.ReadFile(cacheFile("sessions.json")); err == nil {
@@ -260,11 +268,17 @@ func loadSessions() map[string]string {
 	return m
 }
 
-func recordSessions(cfg *Config, panes []Pane, m map[string]string) {
+func recordSessions(s *bd.Snapshot, panes []Pane, m map[string]string) {
 	changed := false
-	for name := range cfg.Lanes {
-		if p, ok := LanePane(panes, name); ok && p.Session != "" && m[name] != p.Session {
-			m[name], changed = p.Session, true
+	for _, p := range panes {
+		if is := s.ByID[p.Title]; p.Agent == "claude" && p.Session != "" && is != nil && !is.Closed() && m[p.Title] != p.Session {
+			m[p.Title], changed = p.Session, true
+		}
+	}
+	for id := range m {
+		if is := s.ByID[id]; is == nil || is.Closed() {
+			delete(m, id)
+			changed = true
 		}
 	}
 	if changed {
