@@ -212,6 +212,21 @@ func (c Client) Ready() ([]Issue, error) {
 	return out, err
 }
 
+// Memories returns the bd remember store, key to content; non-string fields such as schema_version are skipped.
+func (c Client) Memories() (map[string]string, error) {
+	var raw map[string]any
+	if err := c.runJSON(&raw, "memories"); err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for k, v := range raw {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	return out, nil
+}
+
 // ChangeStamp returns the Dolt manifest contents, which change on every commit (local write or pull).
 // The mtime is useless here: even read-only bd calls rewrite the file.
 func (c Client) ChangeStamp() string {

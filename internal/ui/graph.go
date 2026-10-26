@@ -434,6 +434,20 @@ func (v *graphView) depWrite(a *App, desc string, args ...string) tea.Cmd {
 	}
 }
 
+func lintSummary(out string) string {
+	var warn []string
+	for _, l := range strings.Split(out, "\n") {
+		l = strings.TrimSpace(l)
+		if strings.Contains(l, "⚠") || strings.Contains(strings.ToLower(l), "cycle") || strings.HasPrefix(l, "✗") {
+			warn = append(warn, l)
+		}
+	}
+	if len(warn) == 0 {
+		return strings.TrimSpace(out)
+	}
+	return strings.Join(warn, " · ")
+}
+
 func (v *graphView) Hints() []string {
 	return []string{"hjkl move", "D add edge", "X remove edge", "E pick epic", "H closed"}
 }

@@ -42,7 +42,7 @@ bt triage           # hygiene violations as a plain list
 bt triage --json    # the same, for a cleanup agent
 ```
 
-Inside the TUI, `?` lists every key. Views: `1` Now, `2` Ready, `3` Epics, `4` Triage, `5` Activity, `6` Graph, `7` Molecules. `S` runs `bd sync`.
+Inside the TUI, `?` lists every key. Views: `1` Now, `2` Activity, `3` Ready, `4` Inbox, `5` Memories, `6` Board, `7` Molecules, `8` Graph, `9` Triage, `0` Live. `S` runs `bd sync`.
 
 ## Develop
 

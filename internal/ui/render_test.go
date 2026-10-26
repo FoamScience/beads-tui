@@ -268,7 +268,7 @@ func TestEveryTabFollowsMachineFilter(t *testing.T) {
 		bd.Issue{ID: "t-o.1", Parent: "t-o", Title: "Other machine task", IssueType: "task", Status: "in_progress", Labels: []string{"machine:other"}, UpdatedAt: time.Now().Add(-100 * time.Hour)},
 	)
 	a.Update(snapshotMsg{issues: issues, gen: a.gen})
-	for _, name := range []string{"Now", "Ready", "Epics", "Triage", "Activity", "Inbox", "Board"} {
+	for _, name := range []string{"Now", "Ready", "Triage", "Activity", "Inbox", "Board"} {
 		v := a.views[a.viewIndex(name)]
 		var ids []string
 		if k, ok := v.(*kanbanView); ok {
@@ -318,8 +318,6 @@ func rowsOf(v View) []row {
 	case *nowView:
 		return x.rows
 	case *readyView:
-		return x.rows
-	case *epicsView:
 		return x.rows
 	case *triageView:
 		return x.rows
@@ -575,6 +573,38 @@ func TestGraphWrapsTitlesAndShowsSessions(t *testing.T) {
 	for _, want := range []string{"inside the box", "▶ tm-tests", "Ready child"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("graph lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestMemoriesTabRenders(t *testing.T) {
+	for _, size := range [][2]int{{60, 15}, {160, 50}} {
+		a := New(bd.Client{Dir: t.TempDir()})
+		a.state, a.host = defaultState(), "u-host"
+		a.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		a.Update(snapshotMsg{issues: fixture()})
+		a.active = a.viewIndex("Memories")
+		a.Update(memDataMsg{mems: map[string]string{
+			"b-key":               "second memory",
+			"@u-host:proj:c-slug": "tagged memory",
+			"a-key":               strings.Repeat("a long memory that must wrap ", 20),
+		}})
+		out := a.render()
+		plain := ansi.Strip(out)
+		if strings.Contains(plain, "@u-host:proj:") || !strings.Contains(plain, "c-slug") || !strings.Contains(plain, " proj ") {
+			t.Errorf("%dx%d: tags not shown as labels: %q", size[0], size[1], plain)
+		}
+		if !strings.Contains(out, "a-key") || !strings.Contains(out, "b-key") || !strings.Contains(out, "tagged memory") {
+			t.Errorf("%dx%d: memories missing: %q", size[0], size[1], ansi.Strip(out))
+		}
+		lines := strings.Split(out, "\n")
+		if len(lines) != size[1] {
+			t.Errorf("%dx%d: %d lines", size[0], size[1], len(lines))
+		}
+		for i, l := range lines {
+			if w := lipgloss.Width(l); w > size[0] {
+				t.Errorf("%dx%d: line %d is %d wide", size[0], size[1], i, w)
+			}
 		}
 	}
 }
