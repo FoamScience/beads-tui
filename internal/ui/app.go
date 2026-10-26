@@ -106,7 +106,7 @@ func New(client bd.Client) *App {
 		idWidth:      8,
 		loading:      true,
 	}
-	a.views = []View{newNow(), newActivity(), newReady(), newInbox(), newEpics(), newKanban(), newMolecules(), newGraph(), newTriage(), newLive()}
+	a.views = []View{newNow(), newActivity(), newReady(), newInbox(), newMemories(), newKanban(), newMolecules(), newGraph(), newTriage(), newLive()}
 	if cached := loadCache(client.Dir); len(cached) > 0 {
 		a.setSnapshot(bd.NewSnapshot(cached))
 		a.cached = true
@@ -332,7 +332,7 @@ func (a *App) selected() *bd.Issue {
 // split shows the detail pane beside list views; Graph and Molecules use the full width themselves.
 func (a *App) split() bool {
 	switch a.views[a.active].(type) {
-	case *graphView, *moleculesView, *kanbanView, *liveView:
+	case *graphView, *moleculesView, *kanbanView, *liveView, *memoriesView:
 		return false
 	}
 	return a.w >= splitMinWidth
@@ -649,9 +649,14 @@ func (a *App) footer() string {
 	if a.focusDetail || a.detailOpen || a.override != nil {
 		hints = append(hints, "hjkl wbe {} gg G move", "/ n N search", "tab links", "enter open", "i note", "t label", "= est", "s status", "c close", "esc back")
 	} else {
-		hints = append(hints, "enter detail")
+		_, mems := a.views[a.active].(*memoriesView)
+		if !mems {
+			hints = append(hints, "enter detail")
+		}
 		hints = append(hints, a.views[a.active].Hints()...)
-		if _, own := a.views[a.active].(*moleculesView); !own {
+		switch a.views[a.active].(type) {
+		case *moleculesView, *memoriesView:
+		default:
 			hints = append(hints, "s status", "n note", "c close")
 		}
 		hints = append(hints, "/ search", "? keys")

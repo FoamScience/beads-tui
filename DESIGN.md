@@ -44,7 +44,7 @@ The wheel acts on what is under the pointer. Over a text pane (the detail pane, 
 
 ## Machine filter
 
-One filter, chosen with `M` from any list tab and remembered, applies to Now, Ready, Epics, Triage, Activity, Inbox and Board: beads labelled for the selected machine (this one by default, or any `machine:` host, or all), plus beads with no machine label, which belong to nobody and so show everywhere. Graph keeps the whole dependency graph so no edge loses an end; search, Molecules and `bt triage --json` stay global.
+One filter, chosen with `M` from any list tab and remembered, applies to Now, Ready, Memories, Triage, Activity, Inbox and Board: beads labelled for the selected machine (this one by default, or any `machine:` host, or all), plus beads with no machine label, which belong to nobody and so show everywhere. Graph keeps the whole dependency graph so no edge loses an end; search, Molecules and `bt triage --json` stay global.
 
 ## Information architecture
 
@@ -56,7 +56,7 @@ Five views, one shared detail pane. Number keys switch views.
 | `2` | **Activity**: recent changes across the DB, newest first; an agent strip on top (up to 3 per line, fewer on narrow terminals) lists live Claude sessions, plus ended ones that still hold an unclosed bead or were touched in the last 3 days, with closed/assigned beads (every bead whose `claude_session.*` metadata names it, closed ones included), a bar and the age of its latest update; it hides when herdr is unavailable | scrolling agent output |
 | `3` | **Ready**: unblocked work, filter by machine/label/epic | `bd ready` |
 | `4` / `i` | **Inbox**: beads an agent labelled `human`, pending first; `r` responds (comment + close), `X` dismisses; follows the same machine filter as Now and Ready (`M`: this machine by default, all, or one host), and the header badge counts what that filter shows; a human bead with no machine label shows under every filter | `bd human list/respond/dismiss` |
-| `5` | **Epics**: tree with progress, blocked count, swarm lint result | `--type epic`, `--parent`, `swarm validate` loop |
+| `5` | **Memories**: the `bd remember` store, keys on the left and the selected memory wrapped on the right; `f` filters by key or content, `a` remembers, `A` remembers for this machine, `D` forgets, `y` copies the key | `bd memories`, `bd remember`, `bd forget` |
 | `6` / `b` | **Board**: kanban lanes Ready, Blocked, In progress, Deferred, Done (last 7 days), non-epic issues only; `h/l` columns, `j/k` cards, `H/L` move the card (or the marked cards) to the next lane, which sets its status; `E` scopes the board to one epic | `bd update --status`, close flow for Done |
 | `7` | **Molecules**: formulas, protos, live molecules and wisps | `bd formula`, `bd cook`, `bd mol pour/wisp/progress/squash/burn` |
 | `8` | **Graph**: dependency DAG of an epic or issue, navigable; boxes wrap the full title and list each agent session recorded on the bead (`▶` working, `◦` idle, `○` ended), and every row is as tall as its tallest box so edges stay straight | `bd graph`, `bd dep`, `bd blocked` |
@@ -113,9 +113,9 @@ Five views, one shared detail pane. Number keys switch views.
 
 The pane is a read-only pager with a vim cursor: `h j k l`, `w b e` and `W B E`, `0 ^ $`, `{ }`, `gg G` and counts (`5G`, `3w`), `H M L`, `ctrl+d/u/f/b`, `zz zt zb`, and `/` search with `n N`. The Live ledger pane takes the same keys once `tab` focuses it. Because `l`, `e` and `n` are motions here, the label, estimate and note actions move to `t`, `=` and `i` in the pane; `esc` goes back. Children, dependencies and dependents listed in the pane are links: `tab`/`shift+tab` move a cursor over them, `enter` opens one in the same pane, and `esc` walks back through the issues opened this way before closing the pane. Sections collapse with `Z`. Notes come newest first, since that is where agents leave their reasoning. Under the labels, a blocked issue shows its blocker chain (`waits on x.5 → x.3`), followed from its own blockers and then its ancestors' down to the first one that is free to move; list rows show the last link as `⊘ x.3`. A `time` line compares elapsed time (started to closed, wall clock) with the estimate, and parents roll this up over their closed descendants. An `Agent sessions` section lists the Claude sessions the herdr-bd-sessions hook recorded when an agent claimed the bead.
 
-### 5 Epics
+### 5 Memories
 
-Tree of epics, each with a progress bar, counts by status, and a lint badge from `bd swarm validate` (✓, or ⚠ with reversed edges, orphans, cycles). Lint runs lazily per epic and is cached until the epic changes. `Enter` expands children; `R` shows `bd ready --mol <epic>`.
+The `bd remember` store, loaded with `bd memories --json` the first time the tab opens and again after each write or `r`. bd memories carry no labels, so a machine tag lives in the key: `@<host>:<rest>` belongs to that host, any other key to every machine. The shared `M` filter applies as on the bead tabs (the selected machine's memories plus untagged ones). `A` stores one under `@<this host>:` with a key built like bd's own (first eight words of the content). The list shows only the slug; the scope (`global` or the repo) and the machine are drawn as labels, on the row and above the content. `bd prime` still injects every memory on every machine. The detail pane stays closed since a memory is not a bead.
 
 ### 9 Triage
 
