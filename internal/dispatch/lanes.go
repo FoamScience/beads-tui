@@ -1,4 +1,5 @@
-// Package dispatch routes ready beads to long-lived agent sessions (lanes) running in herdr panes.
+// Package dispatch routes ready beads to lanes and works each in its own agent session, named after
+// the bead, in a herdr pane.
 package dispatch
 
 import (
@@ -14,17 +15,16 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Lane is a named Claude session; the session name is the lane name.
+// Lane is where beads are routed; it works them one at a time, each in a new session named after the bead.
 type Lane struct {
 	Name      string   `toml:"-"`
 	Auto      bool     `toml:"-"`     // created by the decider, kept in lanes.auto.toml
 	About     string   `toml:"about"` // what the lane works on, for the decider
 	Cwd       string   `toml:"cwd"`
-	Workspace string   `toml:"workspace"` // herdr workspace label to start the lane in when its session is gone
+	Workspace string   `toml:"workspace"` // herdr workspace label to start the lane's bead sessions in
 	Group     string   `toml:"group"`     // bt dispatch groups lanes by this, else by workspace
 	Takes     Takes    `toml:"takes"`
 	Owns      []string `toml:"owns"`
-	Revive    string   `toml:"revive"` // "fresh" (default) or "resume"
 	Model     string   `toml:"model"`
 }
 
@@ -134,7 +134,7 @@ func (c *Config) NewAutoLane(name, about string) (*Lane, error) {
 	case c.AutoLanes() >= c.Auto.MaxLanes:
 		return nil, fmt.Errorf("auto lane cap %d reached", c.Auto.MaxLanes)
 	}
-	return &Lane{Name: name, Auto: true, About: about, Cwd: c.Auto.Cwd, Workspace: c.Auto.Workspace, Model: c.Auto.Model, Revive: "fresh"}, nil
+	return &Lane{Name: name, Auto: true, About: about, Cwd: c.Auto.Cwd, Workspace: c.Auto.Workspace, Model: c.Auto.Model}, nil
 }
 
 // SaveAutoLane adds l to lanes.auto.toml at path.
@@ -243,12 +243,6 @@ func ParseConfig(src string) (*Config, error) {
 	}
 	for name, l := range c.Lanes {
 		l.Name = name
-		if l.Revive == "" {
-			l.Revive = "fresh"
-		}
-		if l.Revive != "fresh" && l.Revive != "resume" {
-			return nil, fmt.Errorf("lane %s: revive must be fresh or resume, got %q", name, l.Revive)
-		}
 		if rest, ok := strings.CutPrefix(l.Cwd, "~/"); ok {
 			l.Cwd = filepath.Join(home, rest)
 		}
