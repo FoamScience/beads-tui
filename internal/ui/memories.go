@@ -220,11 +220,11 @@ func (v *memoriesView) Render(a *App, w, h int) string {
 	}
 	sep := strings.TrimRight(strings.Repeat(sRule.Render("│")+"\n", h), "\n")
 	return bar + "\n\n" + lipgloss.JoinHorizontal(lipgloss.Top,
-		lipgloss.NewStyle().Width(lw).Height(h).MaxHeight(h).Render(v.renderList(a, lw, h)), " ", sep, " ",
+		lipgloss.NewStyle().Width(lw).Height(h).MaxHeight(h).Render(v.renderList(lw, h)), " ", sep, " ",
 		lipgloss.NewStyle().Height(h).MaxHeight(h).Render(right))
 }
 
-func (v *memoriesView) renderList(a *App, w, h int) string {
+func (v *memoriesView) renderList(w, h int) string {
 	if v.cursor < v.offset {
 		v.offset = v.cursor
 	}
@@ -234,16 +234,11 @@ func (v *memoriesView) renderList(a *App, w, h int) string {
 	var lines []string
 	for i := v.offset; i < min(len(v.keys), v.offset+h); i++ {
 		_, _, slug := memTags(v.keys[i])
-		chips := memChips(a, v.keys[i])
-		nameW := max(w-2-ansi.StringWidth(chips)-1, 8)
-		line := "  " + ansi.Truncate(slug, nameW, "…")
+		line := "  " + ansi.Truncate(slug, w-2, "…")
 		if i == v.cursor {
-			line = sAccent.Render("▸ ") + sSel.Render(ansi.Truncate(slug, nameW, "…"))
+			line = sAccent.Render("▸ ") + sSel.Render(ansi.Truncate(slug, w-2, "…"))
 		}
-		if chips != "" {
-			line = padRight(line, w-ansi.StringWidth(chips)) + chips
-		}
-		lines = append(lines, ansi.Truncate(line, w, "…"))
+		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
 }
