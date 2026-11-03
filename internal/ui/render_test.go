@@ -558,6 +558,44 @@ func TestAgentStripPacksColumnsByWidth(t *testing.T) {
 	}
 }
 
+func TestAgentStripGroupsBeadSessions(t *testing.T) {
+	issues := fixture()
+	issues[0].Metadata = []byte(`{"claude_session.orch":"p"}`)
+	issues[1].Metadata = []byte(`{"claude_session.k1":"p"}`)
+	issues[3].Metadata = []byte(`{"claude_session.k2":"p"}`)
+	issues = append(issues,
+		bd.Issue{ID: "t-c", IssueType: "epic", Status: "open", UpdatedAt: time.Now()},
+		bd.Issue{ID: "t-c.1", Parent: "t-c", IssueType: "task", Status: "open", UpdatedAt: time.Now(),
+			Metadata: []byte(`{"claude_session.k3":"p","lane":"infra"}`)})
+	panes := map[string]agentPane{
+		"orch": {Status: "working", Title: "boss"},
+		"k1":   {Status: "working", Title: "t-a.1"},
+		"k2":   {Status: "idle", Title: "t-a.3"},
+		"k3":   {Status: "idle", Title: "t-c.1"},
+	}
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.Update(tea.WindowSizeMsg{Width: 150, Height: 40})
+	a.Update(snapshotMsg{issues: issues, gen: a.gen})
+	a.Update(herdrMsg{panes: panes})
+	lines := strings.Split(ansi.Strip(a.renderAgents(150, 36)), "\n")
+	at := func(s string) int {
+		for i, l := range lines {
+			if strings.Contains(l, s) {
+				return i
+			}
+		}
+		t.Fatalf("%q missing from strip:\n%s", s, strings.Join(lines, "\n"))
+		return -1
+	}
+	if b := at("boss"); at("t-a.1") != b || at("t-a.3") != b {
+		t.Errorf("bead sessions not beside their orchestrator:\n%s", strings.Join(lines, "\n"))
+	}
+	if l := at("t-c.1"); at("≡ infra") != l || l == at("boss") {
+		t.Errorf("orphan bead session not grouped under its lane:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
 func TestGraphWrapsTitlesAndShowsSessions(t *testing.T) {
 	a := New(bd.Client{Dir: t.TempDir()})
 	a.state, a.host = defaultState(), "u-host"
