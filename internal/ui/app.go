@@ -62,10 +62,11 @@ type App struct {
 	w, h   int
 
 	detail      *detail
-	detailOpen  bool      // full-screen detail in narrow terminals
-	focusDetail bool      // keys go to the detail pane
-	override    *bd.Issue // detail target picked from search or a link, outside the current view
-	history     []string  // issues opened through detail links; "" stands for the view's selection
+	detailOpen  bool         // full-screen detail in narrow terminals
+	focusDetail bool         // keys go to the detail pane
+	override    *bd.Issue    // detail target picked from search or a link, outside the current view
+	search      *searchIndex // built on the first / after each snapshot
+	history     []string     // issues opened through detail links; "" stands for the view's selection
 
 	modal        *modal
 	help         bool
@@ -285,7 +286,7 @@ func (a *App) setSnapshot(s *bd.Snapshot) {
 			delete(a.changed, id)
 		}
 	}
-	a.snap = s
+	a.snap, a.search = s, nil
 	if len(s.Issues) > 0 {
 		a.prefix = strings.SplitN(s.Issues[0].ID, "-", 2)[0] + "-"
 	}
@@ -511,10 +512,12 @@ func (a *App) toggleCollapse() {
 
 func (a *App) searchModal() *modal {
 	opts := make([]option, 0, len(a.snap.Issues))
+	heads := make([]string, 0, len(a.snap.Issues))
 	for _, is := range a.snap.Issues {
 		opts = append(opts, option{value: is.ID, label: fmt.Sprintf("%s %s  %s  %s", statusGlyph[is.Status], a.shortID(is.ID), is.Title, strings.Join(is.Labels, " "))})
+		heads = append(heads, opts[len(opts)-1].label+" "+is.ID)
 	}
-	m := newPicker("Search all issues", opts, func(id string) tea.Cmd {
+	m := newPicker("", opts, func(id string) tea.Cmd {
 		a.override, a.history = a.snap.ByID[id], nil
 		if a.override == nil {
 			return nil
@@ -522,7 +525,37 @@ func (a *App) searchModal() *modal {
 		a.focusDetail = true
 		return a.detail.loadComments(a, a.override)
 	})
-	m.input.Placeholder = "id, title or label"
+	m.input.Placeholder = "id, title, label or words from the body"
+	if a.search == nil {
+		a.search = newSearchIndex(a.snap.Issues, heads)
+	}
+	// bound here: a reload while the modal is open swaps the snapshot and clears a.search
+	index, issues := a.search, a.snap.Issues
+	// the M machine filter applies as on the list tabs; tab widens this search to every machine
+	wide := a.machineFilter() == allMachines
+	scope := func() {
+		if wide {
+			m.title, m.toggle = "Search issues on all machines", "this machine filter"
+		} else {
+			m.title, m.toggle = "Search issues on "+machineHint(a), "all machines"
+		}
+	}
+	scope()
+	m.onToggle = func() { wide = !wide; scope() }
+	m.rank = func(q string) []int {
+		ranked := index.rank(q)
+		if wide {
+			return ranked
+		}
+		kept := ranked[:0:0]
+		for _, i := range ranked {
+			if a.machineMatch(issues[i]) {
+				kept = append(kept, i)
+			}
+		}
+		return kept
+	}
+	m.filter()
 	return m
 }
 

@@ -44,7 +44,7 @@ The wheel acts on what is under the pointer. Over a text pane (the detail pane, 
 
 ## Machine filter
 
-One filter, chosen with `M` from any list tab and remembered, applies to Now, Ready, Memories, Triage, Activity, Inbox and Board: beads labelled for the selected machine (this one by default, or any `machine:` host, or all), plus beads with no machine label, which belong to nobody and so show everywhere. Graph keeps the whole dependency graph so no edge loses an end; search, Molecules and `bt triage --json` stay global.
+One filter, chosen with `M` from any list tab and remembered, applies to Now, Ready, Memories, Triage, Activity, Inbox and Board: beads labelled for the selected machine (this one by default, or any `machine:` host, or all), plus beads with no machine label, which belong to nobody and so show everywhere. Graph keeps the whole dependency graph so no edge loses an end; search follows the filter too but `tab` inside it widens to every machine; Molecules and `bt triage --json` stay global.
 
 ## Information architecture
 
@@ -63,7 +63,7 @@ Five views, one shared detail pane. Number keys switch views.
 | `9` | **Triage**: hygiene violations (including open or in-progress non-epic beads no agent session has claimed), fixable inline | the jq one-liner, wl ref chores |
 | `0` | **Live**: live ledgers (status `pinned`, label `live`, machine-filtered) rendered as ledgers: summary, the Current state table as an aligned grid, the Log newest first with date chips, and the design field as a plain-text Runbook; a ⚠ line names any departure from the ledger format in the beads skill. `+` appends a dated log line and `E` edits the description in `$EDITOR`, both written back with `bd update --body-file -` | `bd update --body-file -` |
 
-`/` searches everywhere (title, id, labels). `Enter` opens detail. `g` on any row opens Graph rooted at its epic. `?` shows all keys.
+`/` searches everywhere: rows whose id, title or labels contain the typed text come first, then issues ranked by BM25 over title, description and notes (any word order, the last word as a prefix while it is being typed). `Enter` opens detail. `g` on any row opens Graph rooted at its epic. `?` shows all keys.
 
 ## Screens
 
