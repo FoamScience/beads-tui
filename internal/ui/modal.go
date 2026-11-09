@@ -25,6 +25,9 @@ type modal struct {
 	multi    bool
 	checked  map[string]bool
 	confirm  bool
+	rank     func(query string) []int // replaces the substring filter with a ranked option order
+	toggle   string                   // hint for tab, which runs onToggle and filters again
+	onToggle func()
 	onSubmit func(values []string) tea.Cmd
 }
 
@@ -65,11 +68,15 @@ func newInput(v string) textinput.Model {
 }
 
 func (m *modal) filter() {
-	q := strings.ToLower(m.input.Value())
-	m.visible = m.visible[:0]
-	for i, o := range m.options {
-		if q == "" || strings.Contains(strings.ToLower(o.label+" "+o.value), q) {
-			m.visible = append(m.visible, i)
+	if m.rank != nil {
+		m.visible = m.rank(m.input.Value())
+	} else {
+		q := strings.ToLower(m.input.Value())
+		m.visible = m.visible[:0]
+		for i, o := range m.options {
+			if q == "" || strings.Contains(strings.ToLower(o.label+" "+o.value), q) {
+				m.visible = append(m.visible, i)
+			}
 		}
 	}
 	m.cursor = clamp(m.cursor, 0, max(len(m.visible)-1, 0))
@@ -123,6 +130,11 @@ func (m *modal) update(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			if m.multi && len(m.visible) > 0 {
 				v := m.options[m.visible[m.cursor]].value
 				m.checked[v] = !m.checked[v]
+				return false, nil
+			}
+			if k == "tab" && m.onToggle != nil {
+				m.onToggle()
+				m.filter()
 				return false, nil
 			}
 		}
@@ -183,6 +195,8 @@ func (m *modal) view(w, h int) string {
 			hint := "enter pick · esc cancel"
 			if m.multi {
 				hint = "space toggle · enter apply · esc cancel"
+			} else if m.onToggle != nil {
+				hint = "tab " + m.toggle + " · " + hint
 			}
 			b.WriteString("\n\n" + sDim.Render(hint))
 		} else {
