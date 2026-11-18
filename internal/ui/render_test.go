@@ -570,7 +570,7 @@ func TestAgentStripGroupsBeadSessions(t *testing.T) {
 	panes := map[string]agentPane{
 		"orch": {Status: "working", Title: "boss"},
 		"k1":   {Status: "working", Title: "t-a.1"},
-		"k2":   {Status: "idle", Title: "t-a.3"},
+		"k2":   {Status: "idle", Title: "work t-a.3 fix"},
 		"k3":   {Status: "idle", Title: "t-c.1"},
 	}
 	a := New(bd.Client{Dir: t.TempDir()})
@@ -588,11 +588,17 @@ func TestAgentStripGroupsBeadSessions(t *testing.T) {
 		t.Fatalf("%q missing from strip:\n%s", s, strings.Join(lines, "\n"))
 		return -1
 	}
-	if b := at("boss"); at("t-a.1") != b || at("t-a.3") != b {
-		t.Errorf("bead sessions not beside their orchestrator:\n%s", strings.Join(lines, "\n"))
+	strip := strings.Join(lines, "\n")
+	for _, hidden := range []string{"t-a.1", "t-a.3", "t-c.1"} {
+		if strings.Contains(strip, hidden) {
+			t.Errorf("bead session %s drawn in strip:\n%s", hidden, strip)
+		}
 	}
-	if l := at("t-c.1"); at("≡ infra") != l || l == at("boss") {
-		t.Errorf("orphan bead session not grouped under its lane:\n%s", strings.Join(lines, "\n"))
+	if l := lines[at("boss")]; !strings.Contains(l, "0/3") {
+		t.Errorf("orchestrator should count its bead sessions' beads (0/3): %q", l)
+	}
+	if l := lines[at("≡ infra")]; !strings.Contains(l, "0/1") {
+		t.Errorf("lane cell should count its bead sessions' beads (0/1): %q", l)
 	}
 }
 

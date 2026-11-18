@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -26,8 +27,9 @@ const (
 type agentSummary struct {
 	id            string
 	closed, total int
-	open          bool      // holds at least one bead that is not closed
-	last          time.Time // newest update on any of its beads
+	beads         map[string]bool // claimed bead id -> closed
+	open          bool            // holds at least one bead that is not closed
+	last          time.Time       // newest update on any of its beads
 	pane          agentPane
 	live          bool
 }
@@ -43,11 +45,12 @@ func (a *App) agents() []agentSummary {
 		for _, s := range sessions(is) {
 			g := by[s.id]
 			if g == nil {
-				g = &agentSummary{id: s.id}
+				g = &agentSummary{id: s.id, beads: map[string]bool{}}
 				g.pane, g.live = a.herdr[s.id]
 				by[s.id] = g
 			}
 			g.total++
+			g.beads[is.ID] = is.Closed()
 			if is.Closed() {
 				g.closed++
 			} else {
@@ -85,6 +88,29 @@ func (a *App) agents() []agentSummary {
 	return out
 }
 
+// fold adds the kids' beads and last update to g, counting a bead g already holds once.
+func (g *agentSummary) fold(kids []agentSummary) {
+	g.beads = maps.Clone(g.beads)
+	if g.beads == nil {
+		g.beads = map[string]bool{}
+	}
+	for _, k := range kids {
+		for id, closed := range k.beads {
+			if _, ok := g.beads[id]; ok {
+				continue
+			}
+			g.beads[id] = closed
+			g.total++
+			if closed {
+				g.closed++
+			}
+		}
+		if k.last.After(g.last) {
+			g.last = k.last
+		}
+	}
+}
+
 // agentGroup is one block of the strip: a session with the bead-named sessions it orchestrates, or,
 // when no orchestrating session is shown, bead-named sessions gathered under their lane or parent bead.
 type agentGroup struct {
@@ -93,10 +119,17 @@ type agentGroup struct {
 	kids  []agentSummary
 }
 
-// sessionBead is the bead a session is named after, for sessions bt dispatch or the work skill started.
+// sessionBead is the bead a session is named after, for sessions bt dispatch or the work skill started:
+// the longest bead id its name contains, so a name holding t-a.1 maps to t-a.1, not t-a.
 func (a *App) sessionBead(id string) *bd.Issue {
 	_, label, _ := a.sessionBadge(id)
-	return a.snap.ByID[label]
+	var best *bd.Issue
+	for _, is := range a.snap.Issues {
+		if strings.Contains(label, is.ID) && (best == nil || len(is.ID) > len(best.ID)) {
+			best = is
+		}
+	}
+	return best
 }
 
 // groupAgents gathers each bead-named session under the nearest shown session, not itself bead-named,
@@ -104,13 +137,15 @@ func (a *App) sessionBead(id string) *bd.Issue {
 // Blocks keep the order of their first member in list.
 func (a *App) groupAgents(list []agentSummary) []agentGroup {
 	at := map[string]int{}
+	bead := map[string]*bd.Issue{}
 	for i, g := range list {
 		at[g.id] = i
+		bead[g.id] = a.sessionBead(g.id)
 	}
 	orchestrator := func(is *bd.Issue) string {
 		for p := a.snap.ByID[is.Parent]; p != nil; p = a.snap.ByID[p.Parent] {
 			for _, s := range sessions(p) {
-				if _, ok := at[s.id]; ok && a.sessionBead(s.id) == nil {
+				if _, ok := at[s.id]; ok && bead[s.id] == nil {
 					return s.id
 				}
 			}
@@ -121,7 +156,7 @@ func (a *App) groupAgents(list []agentSummary) []agentGroup {
 	block := map[string]int{}
 	for _, g := range list {
 		key, label := g.id, ""
-		if is := a.sessionBead(g.id); is != nil {
+		if is := bead[g.id]; is != nil {
 			if o := orchestrator(is); o != "" {
 				key = o
 			} else if label = cmp.Or(metaString(is, "lane"), is.Parent); label != "" {
@@ -157,8 +192,8 @@ func metaString(is *bd.Issue, key string) string {
 }
 
 // renderAgents draws the strip above Activity's list: agents side by side, as many per line as the
-// width allows, each with its closed/assigned progress. Bead-named sessions sit in a block led by
-// their orchestrator (or lane), wrapping in the columns right of it.
+// width allows, each with its closed/assigned progress. Bead-named sessions are not drawn: their
+// beads count toward their orchestrator's cell, or toward a lane cell when no orchestrator is shown.
 func (a *App) renderAgents(w, h int) string {
 	if a.herdr == nil {
 		return ""
@@ -171,122 +206,56 @@ func (a *App) renderAgents(w, h int) string {
 	cols := max(min(w/agentCellW, agentCols), 1)
 	cw := w / cols
 
-	// a slot is one cell: a session, a lane group's head or a "+N done" note
 	type slot struct {
 		g            agentSummary
 		glyph, label string
 		st           int
-		note         string
-		n            int // sessions behind it, for "+N more"
 	}
-	type row struct {
-		cells  []slot
-		indent bool
-	}
-	session := func(g agentSummary) slot {
+	var slots []slot
+	for _, grp := range a.groupAgents(list) {
+		if grp.head == nil {
+			g := agentSummary{}
+			g.fold(grp.kids)
+			slots = append(slots, slot{g: g, glyph: "≡", label: grp.label, st: stDim})
+			continue
+		}
+		g := *grp.head
+		g.fold(grp.kids)
 		glyph, label, st := a.sessionBadge(g.id)
-		return slot{g: g, glyph: glyph, label: label, st: st, n: 1}
+		slots = append(slots, slot{g: g, glyph: glyph, label: label, st: st})
 	}
-	head := func(grp agentGroup) slot {
-		if grp.head != nil {
-			return session(*grp.head)
-		}
-		sum := agentSummary{}
-		for _, k := range grp.kids {
-			sum.closed += k.closed
-			sum.total += k.total
-			if k.last.After(sum.last) {
-				sum.last = k.last
-			}
-		}
-		return slot{g: sum, glyph: "≡", label: grp.label, st: stDim}
+	var rows [][]slot
+	for i := 0; i < len(slots); i += cols {
+		rows = append(rows, slots[i:min(i+cols, len(slots))])
 	}
-
-	var rows []row
-	groups := a.groupAgents(list)
-	used := make([]bool, len(groups))
-	for i, grp := range groups {
-		if used[i] {
-			continue
-		}
-		if len(grp.kids) == 0 {
-			// a line of lone sessions takes the next lone ones, even past groups, so none is left half empty
-			var r row
-			for j := i; j < len(groups) && len(r.cells) < cols; j++ {
-				if !used[j] && len(groups[j].kids) == 0 {
-					used[j] = true
-					r.cells = append(r.cells, session(*groups[j].head))
-				}
-			}
-			rows = append(rows, r)
-			continue
-		}
-		used[i] = true
-		// kids that ended with every bead closed fold into one cell, so live work stays in view
-		var kids []slot
-		done := 0
-		for _, k := range grp.kids {
-			if k.live || k.open {
-				kids = append(kids, session(k))
-			} else {
-				done++
-			}
-		}
-		if done > 0 {
-			kids = append(kids, slot{note: fmt.Sprintf("+%d done", done), n: done})
-		}
-		// the head's line holds what fits beside it; the rest wrap indented across every column
-		first := min(cols-1, len(kids))
-		rows = append(rows, row{cells: append([]slot{head(grp)}, kids[:first]...)})
-		for i := first; i < len(kids); i += cols {
-			rows = append(rows, row{cells: kids[i:min(i+cols, len(kids))], indent: true})
-		}
-	}
-
 	more := 0
 	if len(rows) > lines {
-		for _, r := range rows[lines:] {
-			for _, c := range r.cells {
-				more += c.n
-			}
-		}
+		more = len(slots) - lines*cols
 		rows = rows[:lines]
 	}
 
 	lw := 0
 	for _, r := range rows {
-		for _, c := range r.cells {
+		for _, c := range r {
 			lw = max(lw, ansi.StringWidth(c.label))
 		}
 	}
 	lw = max(min(lw, cw-agentCellFixed-1), 4)
 	cw = min(cw, lw+agentCellFixed+2)
-	// cut narrows a cell, so the first cell of an indented line keeps its bar under the bars above
-	cell := func(c slot, cut int) string {
-		if c.note != "" {
-			return padRight(sDim.Render("   "+c.note), cw-cut)
-		}
+	cell := func(c slot) string {
 		filled := c.g.closed * agentBarCols / max(c.g.total, 1)
 		bar := sOK.Render(strings.Repeat("█", filled)) + sDim.Render(strings.Repeat("░", agentBarCols-filled))
-		s := fmt.Sprintf(" %s %s  %s %s  %s", cellStyles[c.st](c.glyph), padRight(ansi.Truncate(c.label, lw-cut, "…"), lw-cut), bar,
+		s := fmt.Sprintf(" %s %s  %s %s  %s", cellStyles[c.st](c.glyph), padRight(ansi.Truncate(c.label, lw, "…"), lw), bar,
 			padRight(fmt.Sprintf("%d/%d", c.g.closed, c.g.total), 5), sDim.Render(age(c.g.last)))
-		return padRight(ansi.Truncate(s, cw-cut, "…"), cw-cut)
+		return padRight(ansi.Truncate(s, cw, "…"), cw)
 	}
 	var text []string
 	for _, r := range rows {
 		var cells []string
-		for i, c := range r.cells {
-			cut := 0
-			if r.indent && i == 0 {
-				cut = 2
-			}
-			cells = append(cells, cell(c, cut))
+		for _, c := range r {
+			cells = append(cells, cell(c))
 		}
-		l := strings.TrimRight(strings.Join(cells, ""), " ")
-		if r.indent {
-			l = "  " + l
-		}
-		text = append(text, ansi.Truncate(l, w, "…"))
+		text = append(text, ansi.Truncate(strings.TrimRight(strings.Join(cells, ""), " "), w, "…"))
 	}
 	if more > 0 {
 		text = append(text, sDim.Render(fmt.Sprintf("   +%d more", more)))
