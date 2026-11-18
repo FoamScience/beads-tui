@@ -75,6 +75,8 @@ type App struct {
 	detailX      int                    // first column of the split detail pane at the last render, -1 when not split
 	tabEnds      []int                  // column after each tab label in the header at the last render
 	sessionNames map[string]sessionInfo // titles of ended sessions, read from their transcripts
+	pulses       map[string]pulse       // what live sessions' transcripts say they are doing
+	scanning     bool                   // a pulse scan is running
 	state        *state
 	changed      map[string]time.Time
 
@@ -103,6 +105,7 @@ func New(client bd.Client) *App {
 		changed:      map[string]time.Time{},
 		marks:        map[string]bool{},
 		sessionNames: map[string]sessionInfo{},
+		pulses:       map[string]pulse{},
 		state:        loadState(),
 		idWidth:      8,
 		loading:      true,
@@ -217,7 +220,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			a.herdr = msg.panes
 		}
-		return a, a.nameEndedSessions()
+		return a, tea.Batch(a.nameEndedSessions(), a.pulseScan())
+	case pulseMsg:
+		a.pulses, a.scanning = msg, false
+		return a, nil
 	case sessionNamesMsg:
 		for id, info := range msg {
 			a.sessionNames[id] = info
