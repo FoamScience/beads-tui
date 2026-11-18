@@ -44,7 +44,7 @@ The wheel acts on what is under the pointer. Over a text pane (the detail pane, 
 
 ## Machine filter
 
-One filter, chosen with `M` from any list tab and remembered, applies to Now, Ready, Memories, Triage, Activity, Inbox and Board: beads labelled for the selected machine (this one by default, or any `machine:` host, or all), plus beads with no machine label, which belong to nobody and so show everywhere. Graph keeps the whole dependency graph so no edge loses an end; search follows the filter too but `tab` inside it widens to every machine; Molecules and `bt triage --json` stay global.
+One filter, chosen with `M` from any list tab and remembered, applies to Now, Ready, Memories, Triage, Activity, Inbox and Board: beads labelled for the selected machine (this one by default, or any `machine:` host, or all), plus beads with no machine label, which belong to nobody and so show everywhere. Graph keeps the whole dependency graph so no edge loses an end; search follows the filter too but `tab` inside it widens to every machine; Molecules stay global, and so does `bt triage` unless given `--machine`.
 
 ## Information architecture
 
@@ -133,7 +133,7 @@ A checklist of rule violations, each row fixable in place:
 
 Rules come from the CLAUDE.md beads rules, so the TUI enforces the same contract agents are told to follow.
 
-`bt triage --json` prints the same rules without opening the TUI, for handing to a cleanup agent: per rule an id, a count and the offending issues (id, title, status, type, priority, parent, epic, labels, external ref, estimate, updated time) plus a ready-to-edit `bd` fix command. Placeholders such as `<host>` stay unresolved, and `known_machines` lists the existing `machine:` labels so the agent picks the right one instead of defaulting to the current box. `bt triage` without the flag prints a plain list.
+`bt triage --json` prints the same rules without opening the TUI, for handing to a cleanup agent: per rule an id, a count and the offending issues (id, title, status, type, priority, parent, epic, labels, external ref, estimate, updated time) plus a ready-to-edit `bd` fix command. Placeholders such as `<host>` stay unresolved, and `known_machines` lists the existing `machine:` labels so the agent picks the right one instead of defaulting to the current box. `--machine` narrows it the way the TUI filter does (this host, a named host, or `all`) and the JSON echoes the choice as `machine`. `bt triage` without `--json` prints a plain list.
 
 ## Actions
 

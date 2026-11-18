@@ -68,3 +68,18 @@ func TestBlockChainReachesTheActionableBlocker(t *testing.T) {
 		t.Errorf("closable epics: %v", closable)
 	}
 }
+
+func TestOnMachine(t *testing.T) {
+	here := &Issue{Labels: []string{"machine:h"}}
+	other := &Issue{Labels: []string{"machine:o"}}
+	none := &Issue{}
+	for _, c := range []struct {
+		is   *Issue
+		m    string
+		want bool
+	}{{here, "h", true}, {other, "h", false}, {none, "h", true}, {other, AllMachines, true}} {
+		if got := c.is.OnMachine(c.m); got != c.want {
+			t.Errorf("%v on %s: got %v", c.is.Labels, c.m, got)
+		}
+	}
+}

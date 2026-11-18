@@ -108,6 +108,15 @@ func (i *Issue) LabelWithPrefix(p string) string {
 	return ""
 }
 
+const AllMachines = "all"
+
+// OnMachine reports whether the issue belongs to host m: labelled machine:m, or not labelled
+// for any machine, since those belong to nobody and so show everywhere. AllMachines matches every issue.
+func (i *Issue) OnMachine(m string) bool {
+	l := i.LabelWithPrefix("machine:")
+	return m == AllMachines || l == m || l == ""
+}
+
 func (i *Issue) Closed() bool { return i.Status == "closed" }
 
 type Client struct {

@@ -107,7 +107,7 @@ func groupByEpic(a *App, issues []*bd.Issue) []row {
 	return rows
 }
 
-const allMachines = "all"
+const allMachines = bd.AllMachines
 
 func (a *App) machineFilter() string {
 	if a.state.Machine == "" {
@@ -116,13 +116,8 @@ func (a *App) machineFilter() string {
 	return a.state.Machine
 }
 
-// machineMatch is the one machine filter every tab applies: beads labelled for the selected
-// machine, plus beads with no machine label, which belong to nobody and so show everywhere.
-func (a *App) machineMatch(is *bd.Issue) bool {
-	f := a.machineFilter()
-	m := is.LabelWithPrefix("machine:")
-	return f == allMachines || m == f || m == ""
-}
+// machineMatch is the one machine filter every tab applies.
+func (a *App) machineMatch(is *bd.Issue) bool { return is.OnMachine(a.machineFilter()) }
 
 func machineHint(a *App) string {
 	f := a.machineFilter()
@@ -375,7 +370,9 @@ func (v *triageView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 	return v.HandleKey(k.String()), nil
 }
 
-func (v *triageView) Hints() []string { return []string{"[/] rule", "m machine", "x ref", "e est"} }
+func (v *triageView) Hints() []string {
+	return []string{"[/] rule", "M machine", "m set machine", "x ref", "e est"}
+}
 
 // ---- Inbox ----
 
