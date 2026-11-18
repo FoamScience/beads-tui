@@ -20,7 +20,9 @@ var version = "dev" // set by make via -ldflags
 
 const usage = `usage:
   bt                  open the TUI
-  bt triage [--json]  print hygiene violations (JSON for agents)
+  bt triage [--json] [--machine [<host>|all]]
+                      print hygiene violations (JSON for agents); --machine keeps
+                      beads of this host (or <host>) plus unlabelled ones
   bt dispatch         start a session per allowed bead, one bead per lane at a time;
                       the screen edits the allow-list
   bt dispatch --dry-run
@@ -42,11 +44,11 @@ func main() {
 	case os.Args[1] == "--version" || os.Args[1] == "version":
 		fmt.Println("bt", version)
 	case os.Args[1] == "triage":
-		asJSON := len(os.Args) > 2 && os.Args[2] == "--json"
-		if len(os.Args) > 3 || (len(os.Args) == 3 && !asJSON) {
-			fail(fmt.Errorf("%s", usage))
+		asJSON, machine, err := triageArgs(os.Args[2:])
+		if err != nil {
+			fail(err)
 		}
-		if err := triage(c, asJSON); err != nil {
+		if err := triage(c, asJSON, machine); err != nil {
 			fail(err)
 		}
 	case os.Args[1] == "dispatch":
@@ -117,7 +119,27 @@ type triageRule struct {
 	Issues []triageIssue `json:"issues"`
 }
 
-func triage(c bd.Client, asJSON bool) error {
+// triageArgs parses [--json] [--machine [<host>|all]]; a bare --machine means this host.
+func triageArgs(args []string) (asJSON bool, machine string, err error) {
+	machine = bd.AllMachines
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--json":
+			asJSON = true
+		case "--machine":
+			machine, _ = os.Hostname()
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				machine = args[i]
+			}
+		default:
+			return false, "", fmt.Errorf("%s", usage)
+		}
+	}
+	return asJSON, machine, nil
+}
+
+func triage(c bd.Client, asJSON bool, machine string) error {
 	issues, err := c.List()
 	if err != nil {
 		return err
@@ -133,6 +155,7 @@ func triage(c bd.Client, asJSON bool) error {
 	known := slices.Sorted(maps.Keys(machines))
 	var rules []triageRule
 	for _, r := range s.Triage() {
+		r.Issues = slices.DeleteFunc(r.Issues, func(is *bd.Issue) bool { return !is.OnMachine(machine) })
 		tr := triageRule{Rule: r.ID, Name: r.Name, Count: len(r.Issues), Issues: []triageIssue{}}
 		for _, is := range r.Issues {
 			ti := triageIssue{
@@ -151,7 +174,7 @@ func triage(c bd.Client, asJSON bool) error {
 	if asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(map[string]any{"beads_dir": c.Dir, "host": host, "known_machines": known, "generated_at": time.Now().UTC(), "rules": rules})
+		return enc.Encode(map[string]any{"beads_dir": c.Dir, "host": host, "machine": machine, "known_machines": known, "generated_at": time.Now().UTC(), "rules": rules})
 	}
 	for _, r := range rules {
 		if r.Count == 0 {
