@@ -290,6 +290,15 @@ func (v *activityView) Rebuild(a *App) {
 	sort.Slice(list, func(i, j int) bool { return list[i].UpdatedAt.After(list[j].UpdatedAt) })
 	list = list[:min(len(list), 300)]
 	var rows []row
+	v.noteW = 0
+	if fs := a.forgotten(); len(fs) > 0 {
+		v.noteW = 14 // fits the reasons, e.g. "abandoned +12"
+		rows = append(rows, row{header: sSection.Render("Needs attention"), right: sDim.Render("R resumes")})
+		for _, f := range fs {
+			rows = append(rows, row{issue: f.is, note: f.why})
+		}
+		rows = append(rows, row{spacer: true})
+	}
 	day := ""
 	for _, is := range list {
 		if d := dayLabel(is.UpdatedAt); d != day {
