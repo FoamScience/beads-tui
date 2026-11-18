@@ -19,8 +19,8 @@ const (
 	agentCols    = 3
 	agentCellW   = 40 // narrowest cell worth a column
 	agentBarCols = 8
-	// glyph, bar, count and age around the label, counting the spaces between them
-	agentCellFixed = 25
+	// glyph, bar, count and state tag with its age around the label, counting the spaces between them
+	agentCellFixed = 31
 )
 
 // agentSummary is one Claude session and how far it got through the beads it claimed.
@@ -207,22 +207,32 @@ func (a *App) renderAgents(w, h int) string {
 	cw := w / cols
 
 	type slot struct {
-		g            agentSummary
-		glyph, label string
-		st           int
+		g                  agentSummary
+		glyph, label, tail string
+		st                 int
 	}
 	var slots []slot
 	for _, grp := range a.groupAgents(list) {
 		if grp.head == nil {
 			g := agentSummary{}
 			g.fold(grp.kids)
-			slots = append(slots, slot{g: g, glyph: "≡", label: grp.label, st: stDim})
+			slots = append(slots, slot{g: g, glyph: "≡", label: grp.label, tail: age(g.last), st: stDim})
 			continue
 		}
 		g := *grp.head
 		g.fold(grp.kids)
 		glyph, label, st := a.sessionBadge(g.id)
-		slots = append(slots, slot{g: g, glyph: glyph, label: label, st: st})
+		tail := age(g.last)
+		if g.live {
+			kids := 0
+			for _, k := range grp.kids {
+				if a.busy(k.id) {
+					kids++
+				}
+			}
+			glyph, st, tail = a.liveBadge(g.id, kids)
+		}
+		slots = append(slots, slot{g: g, glyph: glyph, label: label, tail: tail, st: st})
 	}
 	var rows [][]slot
 	for i := 0; i < len(slots); i += cols {
@@ -246,7 +256,7 @@ func (a *App) renderAgents(w, h int) string {
 		filled := c.g.closed * agentBarCols / max(c.g.total, 1)
 		bar := sOK.Render(strings.Repeat("█", filled)) + sDim.Render(strings.Repeat("░", agentBarCols-filled))
 		s := fmt.Sprintf(" %s %s  %s %s  %s", cellStyles[c.st](c.glyph), padRight(ansi.Truncate(c.label, lw, "…"), lw), bar,
-			padRight(fmt.Sprintf("%d/%d", c.g.closed, c.g.total), 5), sDim.Render(age(c.g.last)))
+			padRight(fmt.Sprintf("%d/%d", c.g.closed, c.g.total), 5), sDim.Render(c.tail))
 		return padRight(ansi.Truncate(s, cw, "…"), cw)
 	}
 	var text []string

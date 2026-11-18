@@ -345,7 +345,11 @@ func sessionsBody(a *App, is *bd.Issue) string {
 			}
 		}
 		if p, ok := a.herdr[ss.id]; ok {
-			where = p.Status + "  " + p.WSLabel + " / " + p.Title + sDim.Render("  pane "+p.Pane)
+			glyph, st, tail := a.liveBadge(ss.id, 0)
+			where = cellStyles[st](glyph+" "+tail) + "  " + p.WSLabel + " / " + p.Title + sDim.Render("  pane "+p.Pane)
+			if t := a.pulses[ss.id].tool; t != "" {
+				where += sDim.Render("  last: " + t)
+			}
 		}
 		fmt.Fprintf(&b, " %s  %s\n", ss.id[:min(8, len(ss.id))], where)
 	}

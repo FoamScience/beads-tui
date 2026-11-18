@@ -329,7 +329,11 @@ func (v *activityView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 }
 
 func (v *activityView) Render(a *App, w, h int) string {
-	bar := ansi.Truncate(fmt.Sprintf(" %s %s", sDim.Render("machine"), machineHint(a)), w, "…")
+	bar := fmt.Sprintf(" %s %s", sDim.Render("machine"), machineHint(a))
+	if p := a.pulseHeader(); p != "" {
+		bar += "   " + p
+	}
+	bar = ansi.Truncate(bar, w, "…")
 	strip := a.renderAgents(w, h-2)
 	return bar + "\n\n" + strip + v.body(a, w, h-2-strings.Count(strip, "\n"))
 }
