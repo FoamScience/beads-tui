@@ -288,6 +288,11 @@ func (a *App) resume(is *bd.Issue) tea.Cmd {
 	ss := sessions(is)
 	switch len(ss) {
 	case 0:
+		for _, f := range a.laneGaps() {
+			if f.is.ID == is.ID {
+				return flash(f.why + ": bt dispatch starts its session")
+			}
+		}
 		return flash("no agent session recorded on " + a.shortID(is.ID))
 	case 1:
 		return a.resumeSession(ss[0])

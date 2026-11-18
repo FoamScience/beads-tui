@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/FoamScience/beads-tui/internal/bd"
+	"github.com/FoamScience/beads-tui/internal/dispatch"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -77,6 +78,8 @@ type App struct {
 	sessionNames map[string]sessionInfo // titles of ended sessions, read from their transcripts
 	pulses       map[string]pulse       // what live sessions' transcripts say they are doing
 	scanning     bool                   // a pulse scan is running
+	lanes        *dispatch.Config       // lanes.toml, for lane gaps; nil without one
+	allow        dispatch.Allow
 	state        *state
 	changed      map[string]time.Time
 
@@ -220,9 +223,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			a.herdr = msg.panes
 		}
-		return a, tea.Batch(a.nameEndedSessions(), a.pulseScan())
+		a.views[a.viewIndex("Activity")].Rebuild(a)
+		return a, tea.Batch(a.nameEndedSessions(), a.pulseScan(), loadLanes)
 	case pulseMsg:
 		a.pulses, a.scanning = msg, false
+		a.views[a.viewIndex("Activity")].Rebuild(a)
+		return a, nil
+	case lanesMsg:
+		a.lanes, a.allow = msg.cfg, msg.allow
+		a.views[a.viewIndex("Activity")].Rebuild(a)
 		return a, nil
 	case sessionNamesMsg:
 		for id, info := range msg {
