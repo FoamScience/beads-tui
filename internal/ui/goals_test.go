@@ -90,7 +90,7 @@ func press(a *App, keys ...string) {
 func TestGoalsTabScoresAndAccepts(t *testing.T) {
 	a, v := goalsApp(t)
 	out := ansi.Strip(a.render())
-	for _, want := range []string{"@ Goals", "G1 Ship epic A", "G2 Agent ladder", "epic A", "NEXT under epic A", "behind"} {
+	for _, want := range []string{tabLabel(a.active, v), "G1 Ship epic A", "G2 Agent ladder", "epic A", "NEXT under epic A", "behind"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("goals tab lacks %q", want)
 		}

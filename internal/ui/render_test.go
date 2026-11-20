@@ -45,7 +45,7 @@ func TestViewsFitTerminal(t *testing.T) {
 					a.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 				}
 				out := a.render()
-				if head := ansi.Strip(strings.SplitN(out, "\n", 2)[0]); !strings.Contains(head, "1 ") || !strings.Contains(head, "@") {
+				if head := ansi.Strip(strings.SplitN(out, "\n", 2)[0]); !strings.Contains(head, tabLabel(0, a.views[0])) || !strings.Contains(head, "@") {
 					t.Errorf("%s: header lost tabs: %q", name, head)
 				}
 				if tab == 0 && !strings.Contains(out, "Active child") {
@@ -459,21 +459,19 @@ func TestCtrlOTogglesMouseCapture(t *testing.T) {
 }
 
 func TestClickOnTabSwitchesView(t *testing.T) {
-	for _, w := range []int{160, 60} { // names shown, then numbers only for inactive tabs
+	for _, w := range []int{160, 60} {
 		a := New(bd.Client{Dir: t.TempDir()})
 		a.state, a.host = defaultState(), "u-host"
 		a.Update(tea.WindowSizeMsg{Width: w, Height: 30})
 		a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
 		head := ansi.Strip(a.header())
-		if names := strings.Contains(head, "Backlog"); names != (w == 160) {
-			t.Fatalf("width %d: inactive tab names shown %v", w, names)
-		}
 		for i := len(a.views) - 1; i >= 0; i-- {
-			label := fmt.Sprint((i + 1) % 10)
-			if i == a.viewIndex("Goals") {
-				label = "@"
+			label := tabLabel(i, a.views[i])
+			at := strings.Index(head, label)
+			if at < 0 {
+				t.Fatalf("width %d: header lacks tab %q: %q", w, label, head)
 			}
-			x := strings.Index(head, " "+label) + 1
+			x := lipgloss.Width(head[:at]) // icons are multibyte: click in columns, not bytes
 			a.detailOpen = true
 			a.Update(tea.MouseClickMsg{X: x, Y: 0, Button: tea.MouseLeft})
 			if a.active != i || a.detailOpen {
