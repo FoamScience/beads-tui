@@ -12,7 +12,7 @@ import (
 // state is the per-user UI state kept across runs.
 type state struct {
 	NowStatuses []string `json:"now_statuses"`
-	Machine     string   `json:"machine"` // Now/Ready filter: "" this host, "all", or a machine label value
+	Machine     string   `json:"machine"` // Now/Backlog filter: "" this host, "all", or a machine label value
 	ReadyFilter string   `json:"ready_filter"`
 	BoardEpic   string   `json:"board_epic"`         // Board scope; "" shows every epic
 	MouseOff    bool     `json:"mouse_off"`          // leave the mouse to the terminal, so plain drags select text

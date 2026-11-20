@@ -212,13 +212,13 @@ func saveState(a *App) tea.Cmd {
 	return nil
 }
 
-// ---- Ready ----
+// ---- Backlog ----
 
 type readyView struct{ listView }
 
 func newReady() *readyView { return &readyView{listView{empty: "nothing ready for this filter"}} }
 
-func (v *readyView) Name() string { return "Ready" }
+func (v *readyView) Name() string { return "Backlog" }
 
 // ready mirrors bd ready: open, not deferred into the future, no open blocker on itself or an ancestor.
 func (v *readyView) Rebuild(a *App) {
@@ -245,7 +245,7 @@ func (v *readyView) Rebuild(a *App) {
 func (v *readyView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 	switch k.String() {
 	case "f":
-		a.modal = newPrompt("Filter ready (label, epic, title; empty clears)", a.state.ReadyFilter, func(s string) tea.Cmd {
+		a.modal = newPrompt("Filter backlog (label, epic, title; empty clears)", a.state.ReadyFilter, func(s string) tea.Cmd {
 			a.state.ReadyFilter = s
 			v.Rebuild(a)
 			return saveState(a)

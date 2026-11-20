@@ -268,7 +268,7 @@ func TestEveryTabFollowsMachineFilter(t *testing.T) {
 		bd.Issue{ID: "t-o.1", Parent: "t-o", Title: "Other machine task", IssueType: "task", Status: "in_progress", Labels: []string{"machine:other"}, UpdatedAt: time.Now().Add(-100 * time.Hour)},
 	)
 	a.Update(snapshotMsg{issues: issues, gen: a.gen})
-	for _, name := range []string{"Now", "Ready", "Triage", "Activity", "Inbox", "Board"} {
+	for _, name := range []string{"Now", "Backlog", "Triage", "Activity", "Inbox", "Board"} {
 		v := a.views[a.viewIndex(name)]
 		var ids []string
 		if k, ok := v.(*kanbanView); ok {
@@ -463,7 +463,7 @@ func TestClickOnTabSwitchesView(t *testing.T) {
 		a.Update(tea.WindowSizeMsg{Width: w, Height: 30})
 		a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
 		head := ansi.Strip(a.header())
-		if names := strings.Contains(head, "Ready"); names != (w == 160) {
+		if names := strings.Contains(head, "Backlog"); names != (w == 160) {
 			t.Fatalf("width %d: inactive tab names shown %v", w, names)
 		}
 		for i := len(a.views) - 1; i >= 0; i-- {
