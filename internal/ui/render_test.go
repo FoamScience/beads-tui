@@ -27,15 +27,17 @@ func fixture() []bd.Issue {
 }
 
 func TestViewsFitTerminal(t *testing.T) {
+	writeGoals(t)
+	tabs := len(New(bd.Client{Dir: t.TempDir()}).views)
 	for _, size := range [][2]int{{60, 15}, {80, 24}, {120, 40}, {160, 50}} {
-		for tab := range 10 {
+		for tab := range tabs {
 			for _, enter := range []bool{false, true} {
 				name := fmt.Sprintf("%dx%d/tab%d/enter=%v", size[0], size[1], tab+1, enter)
 				a := New(bd.Client{Dir: t.TempDir()})
 				a.state, a.host = defaultState(), "u-host"
 				a.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 				a.Update(snapshotMsg{issues: fixture()})
-				a.active = tab
+				a.switchTo(tab)
 				if g, ok := a.views[tab].(*graphView); ok {
 					g.setRoot(a, a.snap.ByID["t-a.1"])
 				}
@@ -43,7 +45,7 @@ func TestViewsFitTerminal(t *testing.T) {
 					a.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 				}
 				out := a.render()
-				if head := ansi.Strip(strings.SplitN(out, "\n", 2)[0]); !strings.Contains(head, "1 ") || !strings.Contains(head, fmt.Sprint(len(a.views)%10)) {
+				if head := ansi.Strip(strings.SplitN(out, "\n", 2)[0]); !strings.Contains(head, "1 ") || !strings.Contains(head, "@") {
 					t.Errorf("%s: header lost tabs: %q", name, head)
 				}
 				if tab == 0 && !strings.Contains(out, "Active child") {
@@ -467,7 +469,11 @@ func TestClickOnTabSwitchesView(t *testing.T) {
 			t.Fatalf("width %d: inactive tab names shown %v", w, names)
 		}
 		for i := len(a.views) - 1; i >= 0; i-- {
-			x := strings.Index(head, fmt.Sprintf(" %d", (i+1)%10)) + 1
+			label := fmt.Sprint((i + 1) % 10)
+			if i == a.viewIndex("Goals") {
+				label = "@"
+			}
+			x := strings.Index(head, " "+label) + 1
 			a.detailOpen = true
 			a.Update(tea.MouseClickMsg{X: x, Y: 0, Button: tea.MouseLeft})
 			if a.active != i || a.detailOpen {

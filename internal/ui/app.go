@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/FoamScience/beads-tui/internal/bd"
 	"github.com/FoamScience/beads-tui/internal/dispatch"
+	"github.com/FoamScience/beads-tui/internal/goals"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -81,6 +82,9 @@ type App struct {
 	lanes        *dispatch.Config       // lanes.toml, for lane gaps; nil without one
 	allow        dispatch.Allow
 	state        *state
+	goals        *goals.Set
+	goalsErr     error
+	goalTags     map[string][]string // item bead id -> goal ids of the current cycle
 	changed      map[string]time.Time
 
 	stamp    string
@@ -113,7 +117,8 @@ func New(client bd.Client) *App {
 		idWidth:      8,
 		loading:      true,
 	}
-	a.views = []View{newNow(), newActivity(), newInbox(), newReady(), newMemories(), newKanban(), newMolecules(), newGraph(), newTriage(), newLive()}
+	a.views = []View{newNow(), newActivity(), newInbox(), newReady(), newMemories(), newKanban(), newMolecules(), newGraph(), newTriage(), newLive(), newGoals()}
+	a.loadGoals()
 	if cached := loadCache(client.Dir); len(cached) > 0 {
 		a.setSnapshot(bd.NewSnapshot(cached))
 		a.cached = true
@@ -122,7 +127,11 @@ func New(client bd.Client) *App {
 }
 
 func (a *App) Init() tea.Cmd {
-	return tea.Batch(a.load(), tick(), tea.RequestBackgroundColor, a.herdrPoll())
+	cmds := []tea.Cmd{a.load(), tick(), tea.RequestBackgroundColor, a.herdrPoll()}
+	if a.goalsErr != nil {
+		cmds = append(cmds, flashErr(fmt.Errorf("goals: %w", a.goalsErr)))
+	}
+	return tea.Batch(cmds...)
 }
 
 func tick() tea.Cmd {
@@ -348,7 +357,7 @@ func (a *App) selected() *bd.Issue {
 // split shows the detail pane beside list views; Graph and Molecules use the full width themselves.
 func (a *App) split() bool {
 	switch a.views[a.active].(type) {
-	case *graphView, *moleculesView, *kanbanView, *liveView, *memoriesView:
+	case *graphView, *moleculesView, *kanbanView, *liveView, *memoriesView, *goalsView:
 		return false
 	}
 	return a.w >= splitMinWidth
@@ -453,6 +462,8 @@ func (a *App) key(msg tea.KeyPressMsg) tea.Cmd {
 		return a.switchTo(a.viewIndex("Board"))
 	case "0":
 		return a.switchTo(a.viewIndex("Live"))
+	case "@":
+		return a.switchTo(a.viewIndex("Goals"))
 	case "space":
 		if is := a.selected(); is != nil {
 			if a.marks[is.ID] {
@@ -660,10 +671,13 @@ func (a *App) tabs(sep string, names bool) string {
 	a.tabEnds = make([]int, len(a.views))
 	x := 1 // the header's leading space
 	for i, v := range a.views {
-		n := (i + 1) % 10 // the tenth tab answers to 0
-		label := fmt.Sprintf("%d %s", n, v.Name())
+		n := fmt.Sprint((i + 1) % 10) // the tenth tab answers to 0
+		if _, ok := v.(*goalsView); ok {
+			n = "@"
+		}
+		label := n + " " + v.Name()
 		if i != a.active && !names {
-			label = fmt.Sprintf("%d", n)
+			label = n
 		}
 		if i == a.active {
 			out[i] = sTabOn.Render(label)

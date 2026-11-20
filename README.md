@@ -33,6 +33,7 @@ To remove the binary, run `make uninstall`, with the same `PREFIX` or `BINDIR` y
 
 - `~/.config/bt/state.json`: filters and other UI state
 - `~/.cache/bt/`: the last snapshot, used for instant startup
+- `~/.config/bt/goals.accepted.toml`: goal items you accepted in the Goals tab (your own `goals.toml` stays too)
 
 ## Use
 
@@ -41,9 +42,10 @@ bt                  # open the TUI
 bt triage           # hygiene violations as a plain list
 bt triage --json    # the same, for a cleanup agent
 bt triage --machine # only this host's beads (plus unlabelled); --machine <host>|all
+bt goals [--json]   # the current goal cycle: goals, items, states and scores
 ```
 
-Inside the TUI, `?` lists every key. Views: `1` Now, `2` Activity, `3` Inbox, `4` Backlog, `5` Memories, `6` Board, `7` Molecules, `8` Graph, `9` Triage, `0` Live. `S` runs `bd sync`.
+Inside the TUI, `?` lists every key. Views: `1` Now, `2` Activity, `3` Inbox, `4` Backlog, `5` Memories, `6` Board, `7` Molecules, `8` Graph, `9` Triage, `0` Live, `@` Goals. `S` runs `bd sync`.
 
 ## Develop
 

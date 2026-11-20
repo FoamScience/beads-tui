@@ -6,10 +6,10 @@ var helpSections = []struct {
 	title string
 	keys  []string
 }{
-	{"Navigate", []string{"1-9 0 view", "b board", "0 live ledgers", "+ log entry (Live)", "tab next view", "j/k move", "ctrl+d/u half page", "[/] prev/next group", "home/end top/bottom", "enter detail", "esc back", "/ search all", "r reload", "ctrl+o mouse on/off", "q quit"}},
+	{"Navigate", []string{"1-9 0 view", "b board", "0 live ledgers", "@ goals", "+ log entry (Live)", "tab next view", "j/k move", "ctrl+d/u half page", "[/] prev/next group", "home/end top/bottom", "enter detail", "esc back", "/ search all", "r reload", "ctrl+o mouse on/off", "q quit"}},
 	{"Act on selection", []string{"s status", "C claim", "c close", "n note", "p priority", "l label", "m machine", "x external ref", "e estimate", "d defer", "a new child", "y yank id", "o open ref", "S bd sync"}},
 	{"Reading (detail, Live ledger)", []string{"h/j/k/l move", "w/b/e words", "W/B/E WORDs", "0/^/$ line", "{/} paragraph", "gg/G top/bottom", "5G line 5", "H/M/L screen", "ctrl+d/u/f/b page", "zz/zt/zb center/top/bottom", "/ n N search", "i/t/= note/label/est"}},
-	{"Views", []string{"f filter (Now, Backlog)", "M machine filter", "space mark (bulk actions)", "esc clear marks", "i inbox", "R resume agent", "a remember, A for this machine, D forget (Memories)", "H show closed", "Z fold text (detail)", "tab/S-tab next/prev link (detail)", "enter open link, esc back"}},
+	{"Views", []string{"f filter (Now, Backlog)", "M machine filter", "space mark (bulk actions)", "esc clear marks", "i inbox", "R resume agent", "a remember, A for this machine, D forget (Memories)", "H show closed", "Z fold text (detail)", "tab/S-tab next/prev link (detail)", "enter open link, esc back", "h/l pane (Goals)", "x accept item (Goals)", "n create item bead (Goals)", "c next cycle (Goals)", "E edit goals.toml (Goals)"}},
 }
 
 func (a *App) helpView(h int) string {

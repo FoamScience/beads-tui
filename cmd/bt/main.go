@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/FoamScience/beads-tui/internal/bd"
 	"github.com/FoamScience/beads-tui/internal/dispatch"
+	"github.com/FoamScience/beads-tui/internal/goals"
 	"github.com/FoamScience/beads-tui/internal/ui"
 )
 
@@ -23,6 +24,8 @@ const usage = `usage:
   bt triage [--json] [--machine [<host>|all]]
                       print hygiene violations (JSON for agents); --machine keeps
                       beads of this host (or <host>) plus unlabelled ones
+  bt goals [--json]   print the current goal cycle's goals, items, states and scores
+                      from goals.toml (BT_GOALS overrides its path)
   bt dispatch         start a session per allowed bead, one bead per lane at a time;
                       the screen edits the allow-list
   bt dispatch --dry-run
@@ -49,6 +52,13 @@ func main() {
 			fail(err)
 		}
 		if err := triage(c, asJSON, machine); err != nil {
+			fail(err)
+		}
+	case os.Args[1] == "goals":
+		if len(os.Args) > 3 || (len(os.Args) == 3 && os.Args[2] != "--json") {
+			fail(fmt.Errorf("%s", usage))
+		}
+		if err := printGoals(c, len(os.Args) == 3); err != nil {
 			fail(err)
 		}
 	case os.Args[1] == "dispatch":
@@ -185,6 +195,87 @@ func triage(c bd.Client, asJSON bool, machine string) error {
 			fmt.Printf("  %-16s P%d %-11s %s\n", is.ID, is.Priority, is.Status, is.Title)
 		}
 		fmt.Println()
+	}
+	return nil
+}
+
+type goalItem struct {
+	Label      string  `json:"label"`
+	Bead       string  `json:"bead,omitempty"`
+	Title      string  `json:"title,omitempty"`
+	Pts        float64 `json:"pts"`
+	State      string  `json:"state"`
+	AcceptedOn string  `json:"accepted_on,omitempty"`
+}
+
+type goalOut struct {
+	ID      string     `json:"id"`
+	Title   string     `json:"title"`
+	KR      string     `json:"kr,omitempty"`
+	Type    string     `json:"type,omitempty"`
+	Scoring string     `json:"scoring"`
+	Earned  float64    `json:"earned_pct"`
+	Done    float64    `json:"done_unaccepted_pct"`
+	Behind  bool       `json:"behind"`
+	Items   []goalItem `json:"items"`
+}
+
+func printGoals(c bd.Client, asJSON bool) error {
+	set, err := goals.Load(goals.Path())
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	cy := set.Current(now)
+	if cy < 0 {
+		return fmt.Errorf("no goal cycles in %s", set.Path)
+	}
+	issues, err := c.List()
+	if err != nil {
+		return err
+	}
+	s := bd.NewSnapshot(issues)
+	cyc := set.File.Cycles[cy]
+	tp := cyc.TimePct(now)
+	var out []goalOut
+	for _, g := range cyc.Goals {
+		earned, done := set.Score(s, cyc, g)
+		o := goalOut{ID: g.ID, Title: g.Title, KR: g.KR, Type: g.Type, Scoring: g.Scoring, Earned: earned, Done: done,
+			Behind: !cyc.Past(now) && goals.Behind(tp, earned), Items: []goalItem{}}
+		for i, it := range g.Items {
+			gi := goalItem{Label: it.Label, Bead: set.Bead(cyc, g, it), Pts: it.Pts, State: set.State(s, cyc, g, i).String()}
+			if is := s.ByID[gi.Bead]; is != nil {
+				gi.Title = is.Title
+			}
+			if d, ok := set.AcceptedOn(cyc, g, it); ok {
+				gi.AcceptedOn = d
+			}
+			o.Items = append(o.Items, gi)
+		}
+		out = append(out, o)
+	}
+	score := set.CycleScore(s, cyc)
+	if asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(map[string]any{
+			"goals_file": set.Path, "cycle": cyc.ID, "start": cyc.Start.Format(time.DateOnly), "end": cyc.End.Format(time.DateOnly),
+			"time_pct": tp, "earned_pct": score, "warnings": set.Warning, "goals": out, "generated_at": now.UTC(),
+		})
+	}
+	fmt.Printf("%s  %s → %s  time %.0f%%  earned %.0f%%\n", cyc.ID, cyc.Start.Format(time.DateOnly), cyc.End.Format(time.DateOnly), tp, score)
+	for _, w := range set.Warning {
+		fmt.Println("  warning:", w)
+	}
+	for _, g := range out {
+		flag := ""
+		if g.Behind {
+			flag = "  behind"
+		}
+		fmt.Printf("\n%s %s  earned %.0f%% (+%.0f%% done, unaccepted)%s\n", g.ID, g.Title, g.Earned, g.Done, flag)
+		for _, it := range g.Items {
+			fmt.Printf("  %-11s %5.4g  %-16s %s\n", it.State, it.Pts, it.Bead, it.Label)
+		}
 	}
 	return nil
 }
