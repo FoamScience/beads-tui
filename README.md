@@ -43,7 +43,7 @@ bt triage --json    # the same, for a cleanup agent
 bt triage --machine # only this host's beads (plus unlabelled); --machine <host>|all
 ```
 
-Inside the TUI, `?` lists every key. Views: `1` Now, `2` Activity, `3` Ready, `4` Inbox, `5` Memories, `6` Board, `7` Molecules, `8` Graph, `9` Triage, `0` Live. `S` runs `bd sync`.
+Inside the TUI, `?` lists every key. Views: `1` Now, `2` Activity, `3` Inbox, `4` Backlog, `5` Memories, `6` Board, `7` Molecules, `8` Graph, `9` Triage, `0` Live. `S` runs `bd sync`.
 
 ## Develop
 
