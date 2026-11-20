@@ -646,7 +646,7 @@ func (a *App) header() string {
 		st = sOK.Render("●") + sDim.Render(" "+age(a.lastLoad))
 	}
 	if n := a.pendingHuman(); n > 0 {
-		st = sWarn.Render(fmt.Sprintf("✉ %d", n)) + "  " + st
+		st = sWarn.Render(fmt.Sprintf(icInbox+" %d", n)) + "  " + st
 	}
 	if !a.lastSync.IsZero() {
 		st += sDim.Render("  ⇅ " + age(a.lastSync))

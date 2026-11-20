@@ -457,19 +457,19 @@ func (a *App) liveBadge(id string, kids int) (glyph string, st int, tail string)
 	ago := age(since)
 	switch s {
 	case lsWorking:
-		return "▶", stWarn, ago
+		return icWorking, stWarn, ago
 	case lsWaitBg:
 		tag := fmt.Sprintf("bg%d", n)
 		if stalled {
-			return "⧗", stErr, tag + "? " + ago
+			return icWaitBg, stErr, tag + "? " + ago
 		}
-		return "⧗", stBlue, tag + " " + ago
+		return icWaitBg, stBlue, tag + " " + ago
 	case lsWaitSpawn:
-		return "⇉", stBlue, fmt.Sprintf("sp%d %s", n, ago)
+		return icSpawn, stBlue, fmt.Sprintf("sp%d %s", n, ago)
 	case lsBlocked:
-		return "!", stErr, ago
+		return icBlocked, stErr, ago
 	}
-	return "◦", stOK, ago
+	return icIdle, stOK, ago
 }
 
 // pulseHeader sums up every live session on this machine: all idle and for how long, or what is
@@ -496,10 +496,10 @@ func (a *App) pulseHeader() string {
 	}
 	var parts []string
 	if working == 0 && bg == 0 && spawn == 0 {
-		parts = append(parts, sOK.Render("◦ all idle "+age(quiet)))
+		parts = append(parts, sOK.Render(icIdle+" all idle "+age(quiet)))
 	} else {
 		if working > 0 {
-			parts = append(parts, sWarn.Render(fmt.Sprintf("▶ %d working", working)))
+			parts = append(parts, sWarn.Render(fmt.Sprintf(icWorking+" %d working", working)))
 		}
 		var wait []string
 		if bg > 0 {
@@ -509,11 +509,11 @@ func (a *App) pulseHeader() string {
 			wait = append(wait, fmt.Sprintf("%d spawn", spawn))
 		}
 		if len(wait) > 0 {
-			parts = append(parts, sDim.Foreground(cBlue).Render("⧗ waiting on "+strings.Join(wait, " / ")))
+			parts = append(parts, sDim.Foreground(cBlue).Render(icWaitBg+" waiting on "+strings.Join(wait, " / ")))
 		}
 	}
 	if blocked > 0 {
-		parts = append(parts, sErr.Render(fmt.Sprintf("! %d blocked", blocked)))
+		parts = append(parts, sErr.Render(fmt.Sprintf(icBlocked+" %d blocked", blocked)))
 	}
 	return strings.Join(parts, sDim.Render(" · "))
 }

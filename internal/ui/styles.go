@@ -39,6 +39,21 @@ var (
 	sChipOff = lipgloss.NewStyle().Faint(true).Strikethrough(true)
 )
 
+// Nerd Font glyphs for the interface chrome.
+const (
+	icMachine = "\uf108" // desktop
+	icStatus  = "\uf1de" // sliders
+	icInbox   = "\uf0e0" // envelope
+	icWorking = "\uf04b" // play
+	icWaitBg  = "\uf252" // hourglass
+	icSpawn   = "\uf0e8" // sitemap
+	icBlocked = "\uf071" // warning
+	icIdle    = "\uf186" // moon
+	icEnded   = "\uf28d" // stop circle
+	icUnknown = "\uf128" // question
+	icLane    = "\uf0c9" // bars
+)
+
 var statusGlyph = map[string]string{
 	"open":        "○",
 	"in_progress": "◐",

@@ -123,7 +123,7 @@ func (a *App) agentNote(is *bd.Issue) string {
 	}
 	p, ok := a.agentOf(is)
 	if !ok {
-		return sDim.Render("○ ended " + a.sessionLabel(a.latestSession(is)))
+		return sDim.Render(icEnded + " ended " + a.sessionLabel(a.latestSession(is)))
 	}
 	glyph, label, st := p.badge()
 	return cellStyles[st](glyph + " " + label)
@@ -137,11 +137,11 @@ func (p agentPane) badge() (glyph, label string, st int) {
 	}
 	switch p.Status {
 	case "working":
-		return "▶", label, stWarn
+		return icWorking, label, stWarn
 	case "idle":
-		return "◦", label, stOK
+		return icIdle, label, stOK
 	}
-	return "·", label, stDim
+	return icUnknown, label, stDim
 }
 
 // sessionBadge is badge for any session: live ones from herdr, ended ones by their transcript title.
@@ -149,7 +149,7 @@ func (a *App) sessionBadge(id string) (glyph, label string, st int) {
 	if p, ok := a.herdr[id]; ok {
 		return p.badge()
 	}
-	return "○", a.sessionLabel(id), stDim
+	return icEnded, a.sessionLabel(id), stDim
 }
 
 func transcriptPath(id string) string {
