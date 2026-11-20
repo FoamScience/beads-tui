@@ -652,33 +652,40 @@ func (a *App) header() string {
 		st += sDim.Render("  ⇅ " + age(a.lastSync))
 	}
 	right := st + " "
-	// the whole bar is for tabs: tighten spacing, then drop inactive names, so every number stays visible
-	for _, layout := range []struct {
-		sep   string
-		names bool
-	}{{" ", true}, {"", true}, {"", false}} {
-		tabs := " " + a.tabs(layout.sep, layout.names)
+	// the whole bar is for tabs: tighten spacing before anything is cut
+	for _, sep := range []string{" ", ""} {
+		tabs := " " + a.tabs(sep)
 		if gap := a.w - lipgloss.Width(tabs) - lipgloss.Width(right); gap >= 1 {
 			return tabs + strings.Repeat(" ", gap) + right
 		}
 	}
-	return ansi.Truncate(" "+a.tabs("", false)+" "+right, a.w, "…")
+	return ansi.Truncate(" "+a.tabs("")+" "+right, a.w, "…")
 }
 
-// tabs renders the view switcher; without names, only the active view keeps its label.
-func (a *App) tabs(sep string, names bool) string {
+// tabIcons are Nerd Font glyphs, one per view name.
+var tabIcons = map[string]string{
+	"Now": "\uf0e7", "Activity": "\uf1da", "Inbox": "\uf01c", "Backlog": "\uf0ae", "Memories": "\uf0eb",
+	"Board": "\uf0db", "Molecules": "\uf0c3", "Graph": "\uf126", "Triage": "\uf0b0", "Live": "\uf02d", "Goals": "\uf140",
+}
+
+var superscript = strings.NewReplacer("0", "⁰", "1", "¹", "2", "²", "3", "³", "4", "⁴", "5", "⁵", "6", "⁶", "7", "⁷", "8", "⁸", "9", "⁹")
+
+// tabLabel is the view's icon with its key as a superscript; the tenth tab answers to 0, Goals to @.
+func tabLabel(i int, v View) string {
+	key := superscript.Replace(fmt.Sprint((i + 1) % 10))
+	if _, ok := v.(*goalsView); ok {
+		key = "@"
+	}
+	return tabIcons[v.Name()] + key
+}
+
+// tabs renders the view switcher as icons.
+func (a *App) tabs(sep string) string {
 	out := make([]string, len(a.views))
 	a.tabEnds = make([]int, len(a.views))
 	x := 1 // the header's leading space
 	for i, v := range a.views {
-		n := fmt.Sprint((i + 1) % 10) // the tenth tab answers to 0
-		if _, ok := v.(*goalsView); ok {
-			n = "@"
-		}
-		label := n + " " + v.Name()
-		if i != a.active && !names {
-			label = n
-		}
+		label := tabLabel(i, v)
 		if i == a.active {
 			out[i] = sTabOn.Render(label)
 		} else {

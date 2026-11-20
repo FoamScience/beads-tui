@@ -45,7 +45,7 @@ bt triage --machine # only this host's beads (plus unlabelled); --machine <host>
 bt goals [--json]   # the current goal cycle: goals, items, states and scores
 ```
 
-Inside the TUI, `?` lists every key. Views: `1` Now, `2` Activity, `3` Inbox, `4` Backlog, `5` Memories, `6` Board, `7` Molecules, `8` Graph, `9` Triage, `0` Live, `@` Goals. `S` runs `bd sync`.
+Inside the TUI, `?` lists every key. The tab row shows each view as a [Nerd Font](https://www.nerdfonts.com) icon with its key as a superscript, so the terminal needs a Nerd Font. Views: `1` Now, `2` Activity, `3` Inbox, `4` Backlog, `5` Memories, `6` Board, `7` Molecules, `8` Graph, `9` Triage, `0` Live, `@` Goals. `S` runs `bd sync`.
 
 ## Develop
 
