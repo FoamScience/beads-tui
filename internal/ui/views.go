@@ -23,7 +23,7 @@ func (v *listView) Selected() *bd.Issue { return v.issueList.Selected() }
 
 func (v *listView) Render(a *App, w, h int) string {
 	if v.bar {
-		bar := ansi.Truncate(fmt.Sprintf(" %s %s", sDim.Render("machine"), machineHint(a)), w, "…")
+		bar := ansi.Truncate(fmt.Sprintf(" %s %s", sDim.Render(icMachine), machineHint(a)), w, "…")
 		return bar + "\n\n" + v.body(a, w, h-2)
 	}
 	return v.body(a, w, h)
@@ -96,7 +96,7 @@ func groupByEpic(a *App, issues []*bd.Issue) []row {
 			h = row{
 				issue:  e,
 				header: epicBadge(a, e),
-				right:  progressBar(done, total, 8) + sDim.Render(fmt.Sprintf(" %d/%d", done, total)),
+				right:  progressBar(done, total, 8) + sDim.Render(fmt.Sprintf(" %3d/%-3d", done, total)), // fixed width keeps every epic bar in one column
 			}
 		}
 		rows = append(rows, h)
@@ -182,7 +182,7 @@ func (v *nowView) Render(a *App, w, h int) string {
 		}
 	}
 	right := v.columnLabels(w)
-	bar := fmt.Sprintf(" %s %s   %s %s", sDim.Render("status"), strings.Join(chips, " "), sDim.Render("machine"), machineHint(a))
+	bar := fmt.Sprintf(" %s %s   %s %s", sDim.Render(icStatus), strings.Join(chips, " "), sDim.Render(icMachine), machineHint(a))
 	bar = ansi.Truncate(bar, w-ansi.StringWidth(right)-1, "…")
 	bar += strings.Repeat(" ", max(w-ansi.StringWidth(bar)-ansi.StringWidth(right), 1)) + right
 	return bar + "\n\n" + v.listView.Render(a, w, h-2)
@@ -268,7 +268,7 @@ func (v *readyView) Render(a *App, w, h int) string {
 	if f == "" {
 		f = sDim.Render("none")
 	}
-	bar := fmt.Sprintf(" %s %s   %s %s   %s", sDim.Render("filter"), f, sDim.Render("machine"), machineHint(a), sDim.Render(fmt.Sprintf("%d ready", n)))
+	bar := fmt.Sprintf(" %s %s   %s %s   %s", sDim.Render("filter"), f, sDim.Render(icMachine), machineHint(a), sDim.Render(fmt.Sprintf("%d ready", n)))
 	return ansi.Truncate(bar, w, "…") + "\n\n" + v.listView.Render(a, w, h-2)
 }
 
@@ -340,7 +340,7 @@ func (v *activityView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 }
 
 func (v *activityView) Render(a *App, w, h int) string {
-	bar := fmt.Sprintf(" %s %s", sDim.Render("machine"), machineHint(a))
+	bar := fmt.Sprintf(" %s %s", sDim.Render(icMachine), machineHint(a))
 	if p := a.pulseHeader(); p != "" {
 		bar += "   " + p
 	}
@@ -468,7 +468,7 @@ func (v *inboxView) Render(a *App, w, h int) string {
 	if v.showClosed {
 		what = "incl. handled"
 	}
-	bar := fmt.Sprintf(" %s %s   %s", sDim.Render("machine"), machineHint(a), sDim.Render(fmt.Sprintf("%d %s", n, what)))
+	bar := fmt.Sprintf(" %s %s   %s", sDim.Render(icMachine), machineHint(a), sDim.Render(fmt.Sprintf("%d %s", n, what)))
 	return ansi.Truncate(bar, w, "…") + "\n\n" + v.listView.Render(a, w, h-2)
 }
 

@@ -177,7 +177,7 @@ func (v *kanbanView) Render(a *App, w, h int) string {
 	if e := a.snap.ByID[a.state.BoardEpic]; e != nil {
 		scope = a.shortID(e.ID) + " " + e.Title
 	}
-	bar := ansi.Truncate(fmt.Sprintf(" %s %s   %s %s", sDim.Render("scope"), scope, sDim.Render("machine"), machineHint(a)), w, "…")
+	bar := ansi.Truncate(fmt.Sprintf(" %s %s   %s %s", sDim.Render("scope"), scope, sDim.Render(icMachine), machineHint(a)), w, "…")
 	h -= 2
 
 	// show as many columns as fit, keeping the focused one in the window

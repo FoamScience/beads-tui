@@ -216,7 +216,7 @@ func (a *App) renderAgents(w, h int) string {
 		if grp.head == nil {
 			g := agentSummary{}
 			g.fold(grp.kids)
-			slots = append(slots, slot{g: g, glyph: "≡", label: grp.label, tail: age(g.last), st: stDim})
+			slots = append(slots, slot{g: g, glyph: icLane, label: grp.label, tail: age(g.last), st: stDim})
 			continue
 		}
 		g := *grp.head

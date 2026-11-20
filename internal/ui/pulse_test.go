@@ -120,7 +120,7 @@ func TestAgentStripShowsLiveState(t *testing.T) {
 		}},
 	})
 	out := ansi.Strip(a.render())
-	for _, want := range []string{"⇉ boss", "sp1 20m", "⧗ builder", "bg2 12m", "▶ 1 working", "waiting on 2 bg"} {
+	for _, want := range []string{icSpawn + " boss", "sp1 20m", icWaitBg + " builder", "bg2 12m", icWorking + " 1 working", "waiting on 2 bg"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("activity lacks %q:\n%s", want, out)
 		}
@@ -135,7 +135,7 @@ func TestAgentStripShowsLiveState(t *testing.T) {
 		t.Errorf("silent background command not flagged as stalled:\n%s", out)
 	}
 	a.Update(pulseMsg{"orch": {turnEnd: now.Add(-20 * time.Minute)}, "bgs": {turnEnd: now.Add(-9 * time.Minute)}})
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "all idle 9m") || !strings.Contains(out, "◦ boss") {
+	if out := ansi.Strip(a.render()); !strings.Contains(out, "all idle 9m") || !strings.Contains(out, icIdle+" boss") {
 		t.Errorf("idle machine not summed up:\n%s", out)
 	}
 }

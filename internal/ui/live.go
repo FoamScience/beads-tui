@@ -189,7 +189,7 @@ func (v *liveView) Hints() []string {
 }
 
 func (v *liveView) Render(a *App, w, h int) string {
-	bar := ansi.Truncate(fmt.Sprintf(" %s %s   %s", sDim.Render("machine"), machineHint(a), sDim.Render(fmt.Sprintf("%d live ledgers", len(v.ledgers)))), w, "…")
+	bar := ansi.Truncate(fmt.Sprintf(" %s %s   %s", sDim.Render(icMachine), machineHint(a), sDim.Render(fmt.Sprintf("%d live ledgers", len(v.ledgers)))), w, "…")
 	h -= 2
 	if len(v.ledgers) == 0 {
 		return bar + "\n\n" + sDim.Render("  no live ledgers (pinned beads labelled live) for this filter")

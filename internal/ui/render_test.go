@@ -219,12 +219,12 @@ func TestNowShowsLiveAgentForClaimedBead(t *testing.T) {
 	issues[1].Metadata = []byte(`{"claude_session.aaaa_bbbb":"w1:p1"}`)
 	a.Update(snapshotMsg{issues: issues, gen: a.gen})
 	a.Update(herdrMsg{panes: map[string]agentPane{"aaaa-bbbb": {Pane: "w1:p1", Status: "working", Title: "tm-tests", WSLabel: "infra"}}})
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "▶ tm-tests") {
+	if out := ansi.Strip(a.render()); !strings.Contains(out, icWorking+" tm-tests") {
 		t.Fatalf("Now row lacks the live agent:\n%s", out)
 	}
 	a.Update(herdrMsg{panes: map[string]agentPane{}})
 	a.Update(sessionNamesMsg{"aaaa-bbbb": {Name: "8010"}})
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "○ ended 8010") {
+	if out := ansi.Strip(a.render()); !strings.Contains(out, icEnded+" ended 8010") {
 		t.Fatalf("finished session not marked gone:\n%s", out)
 	}
 }
@@ -511,7 +511,7 @@ func TestActivityShowsAgentProgress(t *testing.T) {
 		t.Fatalf("agent strip lacks progress:\n%s", out)
 	}
 	a.Update(herdrMsg{panes: map[string]agentPane{}})
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "○ aaaa-bbb") || !strings.Contains(out, "1/3") {
+	if out := ansi.Strip(a.render()); !strings.Contains(out, icEnded+" aaaa-bbb") || !strings.Contains(out, "1/3") {
 		t.Fatalf("ended recent agent missing from strip:\n%s", out)
 	}
 	stale := time.Now().Add(-30 * 24 * time.Hour)
@@ -519,12 +519,12 @@ func TestActivityShowsAgentProgress(t *testing.T) {
 		issues[i].UpdatedAt = stale
 	}
 	a.Update(snapshotMsg{issues: issues, gen: a.gen})
-	if out := ansi.Strip(a.render()); !strings.Contains(out, "○ aaaa-bbb") {
+	if out := ansi.Strip(a.render()); !strings.Contains(out, icEnded+" aaaa-bbb") {
 		t.Fatalf("ended agent holding open beads dropped once stale:\n%s", out)
 	}
 	issues[1].Status, issues[2].Status = "closed", "closed"
 	a.Update(snapshotMsg{issues: issues, gen: a.gen})
-	if out := ansi.Strip(a.render()); strings.Contains(out, "○ aaaa-bbb") {
+	if out := ansi.Strip(a.render()); strings.Contains(out, icEnded+" aaaa-bbb") {
 		t.Fatalf("stale agent with every bead closed still listed:\n%s", out)
 	}
 }
@@ -601,7 +601,7 @@ func TestAgentStripGroupsBeadSessions(t *testing.T) {
 	if l := lines[at("boss")]; !strings.Contains(l, "0/3") {
 		t.Errorf("orchestrator should count its bead sessions' beads (0/3): %q", l)
 	}
-	if l := lines[at("≡ infra")]; !strings.Contains(l, "0/1") {
+	if l := lines[at(icLane+" infra")]; !strings.Contains(l, "0/1") {
 		t.Errorf("lane cell should count its bead sessions' beads (0/1): %q", l)
 	}
 }
@@ -618,7 +618,7 @@ func TestGraphWrapsTitlesAndShowsSessions(t *testing.T) {
 	a.active = a.viewIndex("Graph")
 	a.views[a.active].(*graphView).setRoot(a, a.snap.ByID["t-a.1"])
 	out := ansi.Strip(a.render())
-	for _, want := range []string{"inside the box", "▶ tm-tests", "Ready child"} {
+	for _, want := range []string{"inside the box", icWorking + " tm-tests", "Ready child"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("graph lacks %q:\n%s", want, out)
 		}
@@ -654,5 +654,29 @@ func TestMemoriesTabRenders(t *testing.T) {
 				t.Errorf("%dx%d: line %d is %d wide", size[0], size[1], i, w)
 			}
 		}
+	}
+}
+
+func TestEpicBarsShareAColumn(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	issues := fixture()
+	issues = append(issues, bd.Issue{ID: "t-z", Title: "Big epic", IssueType: "epic", Status: "open", Priority: 1, UpdatedAt: time.Now()})
+	for i := range 12 {
+		issues = append(issues, bd.Issue{ID: fmt.Sprintf("t-z.%d", i+1), Parent: "t-z", Title: "kid", IssueType: "task", Status: "in_progress", UpdatedAt: time.Now()})
+	}
+	a.Update(snapshotMsg{issues: issues, gen: a.gen})
+	cols := map[int]bool{}
+	for _, l := range strings.Split(ansi.Strip(a.render()), "\n") {
+		if i := strings.Index(l, "▰"); i >= 0 || strings.Contains(l, "▱") {
+			if i < 0 {
+				i = strings.Index(l, "▱")
+			}
+			cols[lipgloss.Width(l[:i])] = true
+		}
+	}
+	if len(cols) != 1 {
+		t.Fatalf("epic bars start in columns %v, want one", cols)
 	}
 }
