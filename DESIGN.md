@@ -44,7 +44,7 @@ The wheel acts on what is under the pointer. Over a text pane (the detail pane, 
 
 ## Machine filter
 
-One filter, chosen with `M` from any list tab and remembered, applies to Now, Backlog, Memories, Triage, Activity, Inbox and Board: beads labelled for the selected machine (this one by default, or any `machine:` host, or all), plus beads with no machine label, which belong to nobody and so show everywhere. Graph keeps the whole dependency graph so no edge loses an end; search follows the filter too but `tab` inside it widens to every machine; Molecules stay global, and so does `bt triage` unless given `--machine`.
+One filter, chosen with `M` from any list tab and remembered, applies to Now, Backlog, Memories, Triage, Activity, Inbox and Board: beads labelled for the selected machine (this one by default, or any `machine:` host, or all), plus beads with no machine label, which belong to nobody and so show everywhere. Graph keeps the whole dependency graph so no edge loses an end; search follows the filter too but `tab` inside it widens to every machine; Molecules stay global, and so does `bt triage` unless given `--machine`; Goals filters only its list of next beads, so goal scores read the same on every machine.
 
 ## Information architecture
 
@@ -62,6 +62,7 @@ Five views, one shared detail pane. Number keys switch views.
 | `8` | **Graph**: dependency DAG of an epic or issue, navigable; boxes wrap the full title and list each agent session recorded on the bead (`▶` working, `◦` idle, `○` ended), and every row is as tall as its tallest box so edges stay straight | `bd graph`, `bd dep`, `bd blocked` |
 | `9` | **Triage**: hygiene violations (including open or in-progress non-epic beads no agent session has claimed), fixable inline | the jq one-liner, wl ref chores |
 | `0` | **Live**: live ledgers (status `pinned`, label `live`, machine-filtered) rendered as ledgers: summary, the Current state table as an aligned grid, the Log newest first with date chips, and the design field as a plain-text Runbook; a ⚠ line names any departure from the ledger format in the beads skill. `+` appends a dated log line and `E` edits the description in `$EDITOR`, both written back with `bd update --body-file -` | `bd update --body-file -` |
+| `@` | **Goals**: personal goal cycles (e.g. a 4-month goal agreement) read from `~/.config/bt/goals.toml` (`BT_GOALS` overrides), never stored in the beads DB. Each cycle has goals, each goal weighted items that point at beads and score as `points` (sum of accepted items) or a `ladder` (rungs locked until the previous one is accepted). An item is open, in progress, done (its bead closed, shown as a ghost bar) or accepted; only `x` accepts, written to `goals.accepted.toml` beside it so the hand-edited file is never rewritten. Panes: goals with earned and elapsed-time bars (`⚠ behind N` past 20 points), the selected goal's items, and the ready or in-progress beads under the selected item, which alone follow `M`. `h/l` pane, `c` next cycle, `n` creates a bead for an item without one, `E` edits goals.toml; past cycles are read-only. Now and Backlog tag beads under an item with its goal ids | `bd create` for missing items |
 
 `/` searches everywhere: rows whose id, title or labels contain the typed text come first, then issues ranked by BM25 over title, description and notes (any word order, the last word as a prefix while it is being typed). `Enter` opens detail. `g` on any row opens Graph rooted at its epic. `?` shows all keys.
 
@@ -134,6 +135,8 @@ A checklist of rule violations, each row fixable in place:
 Rules come from the CLAUDE.md beads rules, so the TUI enforces the same contract agents are told to follow.
 
 `bt triage --json` prints the same rules without opening the TUI, for handing to a cleanup agent: per rule an id, a count and the offending issues (id, title, status, type, priority, parent, epic, labels, external ref, estimate, updated time) plus a ready-to-edit `bd` fix command. Placeholders such as `<host>` stay unresolved, and `known_machines` lists the existing `machine:` labels so the agent picks the right one instead of defaulting to the current box. `--machine` narrows it the way the TUI filter does (this host, a named host, or `all`) and the JSON echoes the choice as `machine`. `bt triage` without `--json` prints a plain list.
+
+`bt goals --json` prints the current goal cycle (dates, elapsed and earned %, warnings such as points not summing to 100) and per goal its score, unaccepted-done share, behind flag and items with bead, title, state and acceptance date; without `--json` it prints the same as text.
 
 ## Actions
 

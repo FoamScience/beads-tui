@@ -33,8 +33,9 @@ type issueList struct {
 	cursor int
 	offset int
 	height int
-	noteW  int // overrides the adaptive note column width
-	ageW   int // width of the updated column, 0 means 4
+	noteW  int  // overrides the adaptive note column width
+	ageW   int  // width of the updated column, 0 means 4
+	goals  bool // tag rows with the goals they work toward
 }
 
 func (l *issueList) SetRows(rows []row) {
@@ -276,6 +277,11 @@ func (l *issueList) renderRow(a *App, r row, sel bool, w int) string {
 		left = fmt.Sprintf("%s%s", marker, indent)
 		titleW = max(w-lipgloss.Width(left)-lipgloss.Width(right), 8)
 		return left + padRight(ansi.Truncate(epicBadge(a, is), titleW, "…"), titleW) + right
+	}
+	if l.goals {
+		if g := a.goalTag(is); g != "" {
+			typ = sDim.Render(g) + " " + typ
+		}
 	}
 	title = padRight(ansi.Truncate(typ+title, titleW, "…"), titleW)
 	return left + title + right

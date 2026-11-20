@@ -136,7 +136,7 @@ func machineHint(a *App) string {
 type nowView struct{ listView }
 
 func newNow() *nowView {
-	return &nowView{listView{empty: "nothing active for this filter", issueList: issueList{ageW: len(updatedLabel)}}}
+	return &nowView{listView{empty: "nothing active for this filter", issueList: issueList{ageW: len(updatedLabel), goals: true}}}
 }
 
 func (v *nowView) Name() string { return "Now" }
@@ -216,7 +216,9 @@ func saveState(a *App) tea.Cmd {
 
 type readyView struct{ listView }
 
-func newReady() *readyView { return &readyView{listView{empty: "nothing ready for this filter"}} }
+func newReady() *readyView {
+	return &readyView{listView{empty: "nothing ready for this filter", issueList: issueList{goals: true}}}
+}
 
 func (v *readyView) Name() string { return "Backlog" }
 
