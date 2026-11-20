@@ -328,11 +328,10 @@ func (v *goalsView) Render(a *App, w, h int) string {
 	tp := c.TimePct(now)
 	score := a.goals.CycleScore(a.snap, c)
 	elapsed, days := c.Days(now)
-	head := fmt.Sprintf(" %s %s %s   %s %s %s   %s %s %s   %s %s",
-		sBold.Render(c.ID), sDim.Render(c.Start.Format("02 Jan")+" → "+c.End.Format("02 Jan 2006")), sDim.Render(fmt.Sprintf("day %d/%d", elapsed, days)),
+	head := fmt.Sprintf(" %s   %s %s %s   %s %s %s   %s %s %s",
+		machineChip(a), sBold.Render(c.ID), sDim.Render(c.Start.Format("02 Jan")+" → "+c.End.Format("02 Jan 2006")), sDim.Render(fmt.Sprintf("day %d/%d", elapsed, days)),
 		sDim.Render("time"), progressBar(int(tp), 100, 10), sDim.Render(fmt.Sprintf("%.0f%%", tp)),
-		sDim.Render("earned"), goalBar(score, 0, 10), fmt.Sprintf("%.0f%%", score),
-		sDim.Render(icMachine), machineHint(a))
+		sDim.Render("earned"), goalBar(score, 0, 10), fmt.Sprintf("%.0f%%", score))
 	if c.Past(now) {
 		head += "  " + sDim.Render("ended")
 	}

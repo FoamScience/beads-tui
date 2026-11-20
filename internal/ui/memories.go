@@ -208,7 +208,7 @@ func (v *memoriesView) Render(a *App, w, h int) string {
 	if f == "" {
 		f = sDim.Render("none")
 	}
-	bar := ansi.Truncate(fmt.Sprintf(" %s %s   %s %s   %s", sDim.Render("filter"), f, sDim.Render(icMachine), machineHint(a), sDim.Render(fmt.Sprintf("%d of %d memories", len(v.keys), len(v.mems)))), w, "…")
+	bar := ansi.Truncate(fmt.Sprintf(" %s   %s %s   %s", machineChip(a), sDim.Render("filter"), f, sDim.Render(fmt.Sprintf("%d of %d memories", len(v.keys), len(v.mems)))), w, "…")
 	h -= 2
 	if len(v.keys) == 0 {
 		return bar + "\n\n" + sDim.Render("  no memories, a remembers one")
