@@ -896,3 +896,23 @@ func TestFormulaVarsAlignAndScroll(t *testing.T) {
 		}
 	}
 }
+
+func TestGraphDownLeavesSingleNodeLayer(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
+	f := bd.Formula{Name: "f", Steps: []bd.FormulaStep{{ID: "plan"}, {ID: "x", Needs: []string{"plan"}}, {ID: "y", Needs: []string{"plan"}}}}
+	g := newGraph()
+	g.fixed, g.rootID, g.showClosed = f.Snapshot(), "f", true
+	g.Rebuild(a)
+	if g.sel != "plan" {
+		t.Fatalf("start on %s, want plan", g.sel)
+	}
+	g.Update(a, tea.KeyPressMsg{Code: 'j', Text: "j"})
+	if g.sel != "y" {
+		t.Fatalf("down from a one-box layer went to %s, want the next row (y)", g.sel)
+	}
+	g.Update(a, tea.KeyPressMsg{Code: 'k', Text: "k"})
+	if g.sel != "x" {
+		t.Fatalf("up within the layer went to %s, want x", g.sel)
+	}
+}
