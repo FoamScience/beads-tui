@@ -36,6 +36,29 @@ func TestTriage(t *testing.T) {
 	}
 }
 
+func TestMeasure(t *testing.T) {
+	now := time.Now()
+	day := 24 * time.Hour
+	s := NewSnapshot([]Issue{
+		{ID: "a", Status: "closed", UpdatedAt: now.Add(-90 * day)},
+		{ID: "b", Status: "open", Priority: 1, Description: "d", EstimatedMinutes: 30, UpdatedAt: now.Add(-40 * day)},
+		{ID: "c", Status: "in_progress", Priority: 2, UpdatedAt: now.Add(-20 * day)},
+		{ID: "d", Status: "in_progress", Assignee: "me", Description: "d", EstimatedMinutes: 15, Priority: 3, UpdatedAt: now},
+		{ID: "e", Status: "deferred", Priority: 0, Description: " ", UpdatedAt: now.Add(-31 * day)},
+		{ID: "f", Status: "open", Priority: 2, Description: "d", EstimatedMinutes: 5, UpdatedAt: now,
+			Dependencies: []Dependency{{IssueID: "f", DependsOnID: "c", Type: "blocks"}}},
+	})
+	got := s.Measure(s.Issues, now)
+	want := Hygiene{Total: 6, Closed: 1, Open: 1, InProgress: 2, Blocked: 1, Deferred: 1,
+		Stale30: 1, Idle14: 2, NoEstimate: 2, HighPriority: 2, Unassigned: 1, NoDescr: 2}
+	if got != want {
+		t.Errorf("got %+v\nwant %+v", got, want)
+	}
+	if got.Active() != 5 {
+		t.Errorf("active %d", got.Active())
+	}
+}
+
 func TestBlockChainReachesTheActionableBlocker(t *testing.T) {
 	s := NewSnapshot([]Issue{
 		{ID: "x-a", Status: "open", Dependencies: []Dependency{{IssueID: "x-a", DependsOnID: "x-b", Type: "blocks"}}},

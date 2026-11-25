@@ -120,6 +120,8 @@ The `bd remember` store, loaded with `bd memories --json` the first time the tab
 
 ### 9 Triage
 
+Above the checklist, a hygiene summary of the beads the machine filter selects, as icon chips that wrap to the width: total beads, share closed, and how many are open, in progress, blocked (by status or by an open dependency, as the glyphs show it), deferred or pinned; then the problems among the not-closed ones, green at zero and yellow otherwise: stale (no update for 30 days, with its share; deferred and pinned beads are left alone on purpose and never count, matching `bd stale`), idle (14 days), no estimate, in progress with no assignee, no description, and the P0/P1 load with its share. The header takes at most a third of the height; on short terminals the status breakdown goes first, then the problem chips.
+
 A checklist of rule violations, each row fixable in place:
 
 | Rule | Fix key |

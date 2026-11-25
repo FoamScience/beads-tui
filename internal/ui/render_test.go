@@ -315,6 +315,37 @@ func TestEveryTabFollowsMachineFilter(t *testing.T) {
 	}
 }
 
+func TestTriageHygieneFollowsMachineFilter(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	issues := append(fixture(), bd.Issue{ID: "t-o", Title: "Other", IssueType: "task", Status: "open", Labels: []string{"machine:other"}, UpdatedAt: time.Now()})
+	a.Update(snapshotMsg{issues: issues, gen: a.gen})
+	v := a.views[a.viewIndex("Triage")].(*triageView)
+	head := func(w int) string { return ansi.Strip(strings.SplitN(v.Render(a, w, 30), "\n\n", 2)[0]) }
+	for _, want := range []string{"5 beads", "20% closed", "1 in progress", "1 blocked", "1 in progress unassigned"} {
+		if !strings.Contains(head(200), want) {
+			t.Errorf("this machine: %q missing from %q", want, head(200))
+		}
+	}
+	for _, l := range strings.Split(head(40), "\n") {
+		if lipgloss.Width(l) > 40 {
+			t.Errorf("hygiene line wider than 40: %q", l)
+		}
+	}
+	short := ansi.Strip(strings.SplitN(v.Render(a, 40, 12), "\n\n", 2)[0])
+	if n := strings.Count(short, "\n") + 1; n > 4 {
+		t.Errorf("header takes %d of 12 rows: %q", n, short)
+	}
+	if !strings.Contains(short, "stale") {
+		t.Errorf("short header dropped the problem chips: %q", short)
+	}
+	a.state.Machine = allMachines
+	a.rebuild()
+	if !strings.Contains(head(200), "6 beads") {
+		t.Errorf("all machines: %q", head(200))
+	}
+}
+
 func rowsOf(v View) []row {
 	switch x := v.(type) {
 	case *nowView:
