@@ -3,6 +3,7 @@ package bd
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -96,6 +97,19 @@ func (c Client) Spawn(name string, wisp bool, vars map[string]string) (string, e
 		return res.RootID, nil
 	}
 	return "", fmt.Errorf("spawned %s but could not read the new root id", name)
+}
+
+// WispGCPreview lists the wisp ids `bd mol wisp gc <flags> --force` would delete. The abandoned
+// mode reports them as cleaned_ids, --closed as issue_ids.
+func (c Client) WispGCPreview(flags ...string) ([]string, error) {
+	var out struct {
+		Cleaned []string `json:"cleaned_ids"`
+		Issues  []string `json:"issue_ids"`
+	}
+	err := c.runJSON(&out, append([]string{"mol", "wisp", "gc", "--dry-run"}, flags...)...)
+	ids := append(out.Cleaned, out.Issues...)
+	slices.Sort(ids)
+	return slices.Compact(ids), err
 }
 
 // DryRun returns bd's preview of what a pour or wisp would create.

@@ -34,6 +34,11 @@ type (
 		out  string
 		err  error
 	}
+	wispGCMsg struct {
+		mode string
+		ids  []string
+		err  error
+	}
 )
 
 type spawnSpec struct {
@@ -262,6 +267,8 @@ func (v *workflowsView) Msg(a *App, msg tea.Msg) tea.Cmd {
 		}
 		v.confirmSpawn(a, m.spec, m.out)
 		return nil
+	case wispGCMsg:
+		return confirmGC(a, m)
 	}
 	return nil
 }
@@ -351,8 +358,53 @@ func (v *workflowsView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 			})
 		}
 		return true, nil
+	case "X":
+		a.modal = newPicker("Collect which wisps?", []option{
+			{"abandoned", "abandoned: open, untouched for over an hour, not blocked or in progress"},
+			{"closed", "closed: every closed wisp"},
+		}, func(mode string) tea.Cmd {
+			flags, ok := wispGCModes[mode]
+			if !ok {
+				return nil
+			}
+			c := a.client
+			return func() tea.Msg {
+				ids, err := c.WispGCPreview(flags...)
+				return wispGCMsg{mode, ids, err}
+			}
+		})
+		return true, nil
 	}
 	return false, nil
+}
+
+var wispGCModes = map[string][]string{"abandoned": nil, "closed": {"--closed"}}
+
+// confirmGC lists what the dry run found and deletes exactly those rows: gc --force would pick its
+// set again at run time. gc ignores the machine filter, so the list spans machines.
+func confirmGC(a *App, m wispGCMsg) tea.Cmd {
+	if m.err != nil {
+		return flashErr(m.err)
+	}
+	if len(m.ids) == 0 {
+		return flash("wisp gc: nothing to collect")
+	}
+	lines := make([]string, 0, len(m.ids))
+	for _, id := range m.ids {
+		l := "  " + a.shortID(id)
+		if is := a.snap.Ephemeral.ByID[id]; is != nil {
+			l += "  " + is.Title
+		}
+		lines = append(lines, l)
+	}
+	if len(lines) > 14 {
+		lines = append(lines[:14], fmt.Sprintf("  … %d more", len(lines)-14))
+	}
+	title := fmt.Sprintf("Delete %d %s wisp rows on every machine, with no digest?\n\n%s", len(m.ids), m.mode, strings.Join(lines, "\n"))
+	a.modal = newConfirm(title, func() tea.Cmd {
+		return a.write(fmt.Sprintf("wisp gc: %d rows", len(m.ids)), nil, append([]string{"delete", "--force"}, m.ids...)...)
+	})
+	return nil
 }
 
 var formulaName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -558,7 +610,7 @@ func (v *workflowsView) spawn(a *App, spec spawnSpec) tea.Cmd {
 }
 
 func (v *workflowsView) Hints() []string {
-	return []string{"p pour", "w wisp", "n new", "E edit", "d distill", "Q squash", "B burn", "h/l J/K steps", "H closed", "M machine"}
+	return []string{"p pour", "w wisp", "n new", "E edit", "d distill", "Q squash", "B burn", "X wisp gc", "h/l J/K steps", "H closed", "M machine"}
 }
 
 func (v *workflowsView) Render(a *App, w, h int) string {

@@ -199,6 +199,7 @@ One tab for everything workflow-related, opening with the machine card like the 
 - **Distill:** `d` on an epic runs `bd mol distill` to turn ad-hoc work into a formula, then opens it for editing.
 - **Pour / wisp:** `p` / `w` opens a form with one field per declared variable (defaults filled in), shows the `--dry-run` result, then creates it. Afterwards the same form sets the new root's parent, title and labels. `local-e2e.formula.toml` documents these three follow-up commands as a manual step that leaves a stray root when skipped, so the TUI does them as part of the pour.
 - **Lifecycle:** `Q` squash, `B` burn (confirm, irreversible), plus stale molecules (an open root whose direct children are all closed, as `bd mol stale` counts them) flagged in the list and counted in the card. Wisps are never stale: all steps closed under an open root is how a wisp waits for its squash. `S` stays the global sync key.
+- **Wisp gc:** `X` picks abandoned (bd's default: open, idle over 1h, not blocked or in progress) or every closed wisp, lists the `bd mol wisp gc --dry-run` result, then deletes exactly those rows with `bd delete --force`, since `gc --force` would pick its set again at run time. gc takes no machine scope, so the list spans every machine.
 - **Preview:** a formula shows its vars and a step DAG drawn with the Graph renderer (shared title prefix such as `local-e2e {{change}}: ` is trimmed); `h/l` moves between layers and `J/K` within a layer (`j/k` stay on the list). A molecule or wisp shows its live graph.
 
 ## Out of scope for v1
