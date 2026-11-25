@@ -162,7 +162,7 @@ Writes are optimistic: the row updates at once, and a failed command reverts it 
 
 ## Data and refresh
 
-- One full snapshot (`bd list --json --all --limit 0 --include-ephemeral`) held in memory; views are filters over it. Each bd call costs 2 to 7 s on this machine (opening the embedded Dolt DB dominates, so incremental queries are no cheaper).
+- One full snapshot (`bd list --json --all --limit 0 --include-ephemeral`) held in memory; views are filters over it, except for wisps, which only the Workflows tab lists (see 7 Workflows). Each bd call costs 2 to 7 s on this machine (opening the embedded Dolt DB dominates, so incremental queries are no cheaper).
 - The last snapshot is cached in `~/.cache/bt/`, so bt draws in about 0.25 s and refreshes in the background.
 - Change detection reads the Dolt manifest once a second and reloads only when its contents change. Its mtime cannot be used: read-only bd calls rewrite the file. A full reload also runs every 2 minutes; a failed load retries after 5 s.
 - Loads carry a generation number, and a snapshot that arrives while a write is in flight is dropped, so optimistic edits never flicker back.
@@ -193,7 +193,7 @@ Layered DAG computed from the in-memory snapshot with the same layering as `bd g
 
 ### 7 Workflows
 
-One tab for everything workflow-related, opening with the machine card like the other tabs. Three panes: formulas (from all `bd formula list` search paths), live molecules and wisps, and a preview. Molecules and wisps come from the snapshot, which reads `bd list --all --include-ephemeral` so wisps arrive with the rest; separate `bd mol wisp list` / `bd mol stale` reads ran into the read timeout while Dolt was locked. The snapshot keeps the ephemeral rows apart, so wisps show only here: no other tab, triage rule, hygiene count or `bt dispatch` sees them, and the disk cache leaves them out.
+One tab for everything workflow-related, opening with the machine card like the other tabs. Three panes: formulas (from all `bd formula list` search paths), live molecules and wisps, and a preview. Molecules and wisps come from the snapshot, which reads `bd list --all --include-ephemeral` so wisps arrive with the rest; separate `bd mol wisp list` / `bd mol stale` reads ran into the read timeout while Dolt was locked. The snapshot keeps the ephemeral rows apart, so wisps show only here: no other tab, triage rule, hygiene count or `bt dispatch` lists them as rows, and the disk cache leaves them out (the header says the wisps are loading until bd answers). Blocker and dependent lookups still cross the split: a bead waiting on an open wisp stays blocked everywhere, and a wisp step waiting on a regular bead shows as blocked here. Detail on a wisp reads its deps, dependents and children from the wisp side.
 
 - **Author:** `n` scaffolds a new `.formula.toml` in `~/tasks/.beads/formulas/`; `E` opens the selected one in `$EDITOR`. When the editor exits, the TUI runs `bd cook <formula>` (compile mode), reports the parse error in the footer if there is one, and reloads the preview.
 - **Distill:** `d` on an epic runs `bd mol distill` to turn ad-hoc work into a formula, then opens it for editing.

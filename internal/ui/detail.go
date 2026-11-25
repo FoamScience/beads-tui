@@ -100,7 +100,7 @@ var detailSections = []string{"description", "design", "acceptance", "notes", "c
 
 func (d *detail) content(a *App, is *bd.Issue, w int) string {
 	d.cand = d.cand[:0]
-	s := a.snap
+	s := a.snap.Of(is)
 	var b strings.Builder
 	line := func(parts ...string) { b.WriteString(" " + strings.Join(parts, "  ") + "\n") }
 
@@ -113,7 +113,7 @@ func (d *detail) content(a *App, is *bd.Issue, w int) string {
 		line(sBold.Render(l))
 	}
 	var meta []string
-	if p := s.ByID[is.Parent]; p != nil {
+	if p := s.Find(is.Parent); p != nil {
 		meta = append(meta, sDim.Render("parent ")+a.shortID(p.ID)+" "+ansi.Truncate(p.Title, 40, "…"))
 	}
 	if is.ExternalRef != "" {
@@ -228,7 +228,7 @@ func (d *detail) deps(a *App, is *bd.Issue, w int) string {
 	s := a.snap
 	var b strings.Builder
 	item := func(kind, id string) {
-		t := s.ByID[id]
+		t := s.Find(id)
 		title := ""
 		g := " "
 		if t != nil {
@@ -250,8 +250,9 @@ func (d *detail) deps(a *App, is *bd.Issue, w int) string {
 
 func (d *detail) children(a *App, is *bd.Issue, w int) string {
 	var b strings.Builder
-	for _, c := range a.snap.Children[is.ID] {
-		l := fmt.Sprintf("%s%s %s %s %s", d.mark(c.ID), glyph(a.snap, c), a.shortID(c.ID), prio(c.Priority), c.Title)
+	s := a.snap.Of(is)
+	for _, c := range s.Children[is.ID] {
+		l := fmt.Sprintf("%s%s %s %s %s", d.mark(c.ID), glyph(s, c), a.shortID(c.ID), prio(c.Priority), c.Title)
 		b.WriteString(ansi.Truncate(l, w, "…") + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n")

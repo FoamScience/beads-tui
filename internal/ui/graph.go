@@ -396,7 +396,7 @@ func (v *graphView) removeDepModal(a *App, is *bd.Issue) *modal {
 			continue
 		}
 		title := ""
-		if t := a.snap.ByID[d.DependsOnID]; t != nil {
+		if t := a.snap.Find(d.DependsOnID); t != nil {
 			title = t.Title
 		}
 		opts = append(opts, option{d.DependsOnID, fmt.Sprintf("%-16s %s  %s", d.Type, a.shortID(d.DependsOnID), title)})
