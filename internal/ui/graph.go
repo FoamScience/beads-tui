@@ -294,12 +294,8 @@ func (v *graphView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 			if k.String() == "k" || k.String() == "up" {
 				d = -1
 			}
-			l := v.layers[n.layer]
-			for i := n.pos + d; i >= 0 && i < len(l); i += d {
-				if !l[i].dummy {
-					v.sel = l[i].id
-					break
-				}
+			if m := v.vertical(n, d); m != nil {
+				v.sel = m.id
 			}
 		}
 		return true, nil
@@ -331,6 +327,29 @@ func (v *graphView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 		return true, nil
 	}
 	return false, nil
+}
+
+// vertical finds the next box in direction d within n's layer, else the closest row below/above in any layer, nearest layer first.
+func (v *graphView) vertical(n *gnode, d int) *gnode {
+	l := v.layers[n.layer]
+	for i := n.pos + d; i >= 0 && i < len(l); i += d {
+		if !l[i].dummy {
+			return l[i]
+		}
+	}
+	var best *gnode
+	for _, ly := range v.layers {
+		for _, m := range ly {
+			if m.dummy || (m.pos-n.pos)*d <= 0 {
+				continue
+			}
+			if best == nil || abs(m.pos-n.pos) < abs(best.pos-n.pos) ||
+				(abs(m.pos-n.pos) == abs(best.pos-n.pos) && abs(m.layer-n.layer) < abs(best.layer-n.layer)) {
+				best = m
+			}
+		}
+	}
+	return best
 }
 
 func nearest(l []*gnode, pos int) *gnode {
