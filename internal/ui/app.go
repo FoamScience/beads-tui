@@ -321,7 +321,7 @@ func (a *App) setSnapshot(s *bd.Snapshot) {
 		}
 	}
 	if a.override != nil {
-		a.override = s.ByID[a.override.ID]
+		a.override = s.Find(a.override.ID)
 	}
 	a.rebuild()
 }
@@ -397,7 +397,7 @@ func (a *App) key(msg tea.KeyPressMsg) tea.Cmd {
 			if n := len(a.history); n > 0 {
 				prev := a.history[n-1]
 				a.history = a.history[:n-1]
-				a.override = a.snap.ByID[prev]
+				a.override = a.snap.Find(prev)
 				return nil
 			}
 			a.focusDetail, a.detailOpen, a.override = false, false, nil
@@ -409,7 +409,7 @@ func (a *App) key(msg tea.KeyPressMsg) tea.Cmd {
 			a.detail.moveLink(-1)
 			return nil
 		case "enter":
-			if t := a.snap.ByID[a.detail.selectedLink()]; t != nil {
+			if t := a.snap.Find(a.detail.selectedLink()); t != nil {
 				cur := ""
 				if a.override != nil {
 					cur = a.override.ID

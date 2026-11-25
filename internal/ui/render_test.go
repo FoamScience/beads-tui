@@ -771,7 +771,7 @@ func TestWorkflowsFromSnapshot(t *testing.T) {
 			bar = l
 		}
 	}
-	if !strings.Contains(bar, "2 molecules · 1 wisps") || !strings.Contains(bar, "1 stale") {
+	if !strings.Contains(bar, "2 molecules · 1 wisp") || strings.Contains(bar, "1 wisps") || !strings.Contains(bar, "1 stale") {
 		t.Fatalf("Workflows card wrong: %q", bar)
 	}
 	if !strings.Contains(out, "done pour 1/1 stale") {

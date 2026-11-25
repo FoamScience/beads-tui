@@ -125,10 +125,7 @@ func (v *workflowsView) isMolRoot(a *App, is *bd.Issue) bool {
 	if is.Parent == "" {
 		return true
 	}
-	p := a.snap.ByID[is.Parent]
-	if p == nil {
-		p = a.snap.Ephemeral.ByID[is.Parent]
-	}
+	p := a.snap.Find(is.Parent)
 	return p != nil && p.IssueType != "molecule" && !v.isMol(a, p.ID)
 }
 
@@ -617,7 +614,14 @@ func (v *workflowsView) Render(a *App, w, h int) string {
 	if !v.loaded {
 		return strings.Join(header(a, w), "\n") + "\n" + sDim.Render("  loading formulas…")
 	}
-	chips := []string{sDim.Render(fmt.Sprintf("%d formulas · %d molecules · %d wisps", len(v.formulas), v.nMols, v.nWisps))}
+	wisps := plural(v.nWisps, "wisp")
+	switch {
+	case a.cached && a.loadErr != nil:
+		wisps = "wisps not loaded" // the disk cache leaves wisps out
+	case a.cached:
+		wisps = "wisps loading…"
+	}
+	chips := []string{sDim.Render(plural(len(v.formulas), "formula") + " · " + plural(v.nMols, "molecule") + " · " + wisps)}
 	if v.nStale > 0 {
 		chips = append(chips, sWarn.Render(fmt.Sprintf("%d stale", v.nStale)))
 	}

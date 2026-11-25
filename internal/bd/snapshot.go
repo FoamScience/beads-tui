@@ -15,6 +15,8 @@ type Snapshot struct {
 	Loaded   time.Time
 	// Ephemeral indexes the wisp rows on their own, so no rule or view outside Workflows sees them.
 	Ephemeral *Snapshot
+	// peer is the other side of the ephemeral split; blocker and dependent lookups cross it.
+	peer *Snapshot
 }
 
 func NewSnapshot(issues []Issue) *Snapshot {
@@ -28,6 +30,23 @@ func NewSnapshot(issues []Issue) *Snapshot {
 	}
 	s := index(kept)
 	s.Ephemeral = index(eph)
+	s.peer, s.Ephemeral.peer = s.Ephemeral, s
+	return s
+}
+
+// Find looks an id up on both sides of the ephemeral split.
+func (s *Snapshot) Find(id string) *Issue {
+	if is := s.ByID[id]; is != nil || s.peer == nil {
+		return is
+	}
+	return s.peer.ByID[id]
+}
+
+// Of returns the index holding the issue: s, or the other side of the split.
+func (s *Snapshot) Of(is *Issue) *Snapshot {
+	if s.ByID[is.ID] == nil && s.peer != nil && s.peer.ByID[is.ID] != nil {
+		return s.peer
+	}
 	return s
 }
 
@@ -64,20 +83,26 @@ func (s *Snapshot) Blockers(is *Issue) []*Issue {
 		if !blockingTypes[d.Type] {
 			continue
 		}
-		if t, ok := s.ByID[d.DependsOnID]; ok && !t.Closed() {
+		if t := s.Find(d.DependsOnID); t != nil && !t.Closed() {
 			out = append(out, t)
 		}
 	}
 	return out
 }
 
-// Dependents returns issues that depend on this one through any non-parent edge.
+// Dependents returns issues on either side of the split that depend on this one through any
+// non-parent edge.
 func (s *Snapshot) Dependents(id string) []Dependency {
 	var out []Dependency
-	for _, is := range s.Issues {
-		for _, d := range is.Dependencies {
-			if d.DependsOnID == id && d.Type != "parent-child" {
-				out = append(out, d)
+	for _, idx := range []*Snapshot{s, s.peer} {
+		if idx == nil {
+			continue
+		}
+		for _, is := range idx.Issues {
+			for _, d := range is.Dependencies {
+				if d.DependsOnID == id && d.Type != "parent-child" {
+					out = append(out, d)
+				}
 			}
 		}
 	}
@@ -103,7 +128,7 @@ func (s *Snapshot) BlockChain(is *Issue) []*Issue {
 }
 
 func (s *Snapshot) firstBlocker(is *Issue) *Issue {
-	for p := is; p != nil; p = s.ByID[p.Parent] {
+	for p := is; p != nil; p = s.Find(p.Parent) {
 		if b := s.Blockers(p); len(b) > 0 {
 			return b[0]
 		}
@@ -137,7 +162,7 @@ func (s *Snapshot) Ready(is *Issue) bool {
 	if is.DeferUntil != nil && is.DeferUntil.After(time.Now()) {
 		return false
 	}
-	for p := is; p != nil; p = s.ByID[p.Parent] {
+	for p := is; p != nil; p = s.Find(p.Parent) {
 		if s.IsBlocked(p) {
 			return false
 		}
