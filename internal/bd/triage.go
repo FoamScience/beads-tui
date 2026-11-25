@@ -2,6 +2,7 @@ package bd
 
 import (
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -47,6 +48,67 @@ var TriageRules = []TriageRule{
 	{"repo-task-without-refs", "repo task without code refs", `bd update {id} --metadata '{"refs":[{"repo":"~/repo/x","file":"path","symbol":"Name","line":1}]}'`, "", func(s *Snapshot, is *Issue) bool {
 		return is.Status == "in_progress" && is.IssueType != "epic" && is.LabelWithPrefix("repo:") != "" && len(is.Refs()) == 0
 	}},
+}
+
+// Hygiene summarises the health of a set of issues; every count past Closed is over the not-closed ones.
+type Hygiene struct {
+	Total, Closed                                 int
+	Open, InProgress, Blocked, Deferred, Pinned   int
+	Stale30, Idle14                               int
+	NoEstimate, HighPriority, Unassigned, NoDescr int
+}
+
+func (h Hygiene) Active() int { return h.Total - h.Closed }
+
+// Measure computes Hygiene over issues as of now. Open issues waiting on a dependency count as
+// blocked, as the list glyphs show them. Stale means no update for 30 days, idle for 14; deferred
+// and pinned issues are left alone on purpose, so neither counts them.
+func (s *Snapshot) Measure(issues []*Issue, now time.Time) Hygiene {
+	var h Hygiene
+	for _, is := range issues {
+		h.Total++
+		if is.Closed() {
+			h.Closed++
+			continue
+		}
+		switch is.Status {
+		case "open":
+			if s.IsBlocked(is) {
+				h.Blocked++
+			} else {
+				h.Open++
+			}
+		case "in_progress":
+			h.InProgress++
+			if is.Assignee == "" {
+				h.Unassigned++
+			}
+		case "blocked":
+			h.Blocked++
+		case "deferred":
+			h.Deferred++
+		case "pinned":
+			h.Pinned++
+		}
+		if idle := now.Sub(is.UpdatedAt); is.Status != "deferred" && is.Status != "pinned" {
+			if idle >= 30*24*time.Hour {
+				h.Stale30++
+			}
+			if idle >= 14*24*time.Hour {
+				h.Idle14++
+			}
+		}
+		if is.EstimatedMinutes == 0 {
+			h.NoEstimate++
+		}
+		if is.Priority <= 1 {
+			h.HighPriority++
+		}
+		if strings.TrimSpace(is.Description) == "" {
+			h.NoDescr++
+		}
+	}
+	return h
 }
 
 type TriageResult struct {

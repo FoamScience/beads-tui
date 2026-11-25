@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/FoamScience/beads-tui/internal/bd"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -356,13 +357,18 @@ func (v *activityView) Hints() []string { return []string{"[/] day"} }
 
 // ---- Triage ----
 
-type triageView struct{ listView }
+type triageView struct {
+	listView
+	health bd.Hygiene
+}
 
-func newTriage() *triageView { return &triageView{listView{empty: "all clean", bar: true}} }
+func newTriage() *triageView { return &triageView{listView: listView{empty: "all clean"}} }
 
 func (v *triageView) Name() string { return "Triage" }
 
 func (v *triageView) Rebuild(a *App) {
+	mine := slices.DeleteFunc(slices.Clone(a.snap.Issues), func(is *bd.Issue) bool { return !a.machineMatch(is) })
+	v.health = a.snap.Measure(mine, time.Now())
 	var rows []row
 	for _, r := range a.snap.Triage() {
 		r.Issues = slices.DeleteFunc(r.Issues, func(is *bd.Issue) bool { return !a.machineMatch(is) })
@@ -386,6 +392,97 @@ func (v *triageView) Rebuild(a *App) {
 
 func (v *triageView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 	return v.HandleKey(k.String()), nil
+}
+
+// Render puts the hygiene metrics of the filtered beads above the rule violations. The header
+// takes at most a third of the height: the status breakdown goes first, then problem chips past the budget.
+func (v *triageView) Render(a *App, w, h int) string {
+	lines := flowChips(w, machineChip(a))
+	if v.health.Total > 0 {
+		budget := max(h/3, 1)
+		problems := flowChips(w, v.problemChips()...)
+		lines = append(flowChips(w, append([]string{machineChip(a)}, v.summaryChips()...)...), problems...)
+		if len(lines) > budget {
+			lines = append(flowChips(w, machineChip(a)), problems...)
+		}
+		lines = lines[:min(len(lines), budget)]
+	}
+	top := strings.Join(lines, "\n")
+	return top + "\n\n" + v.body(a, w, h-len(lines)-1)
+}
+
+func (v *triageView) summaryChips() []string {
+	hy := v.health
+	chips := []string{
+		sDim.Render(icBeads) + fmt.Sprintf(" %d beads", hy.Total),
+		sOK.Render(statusGlyph["closed"]) + fmt.Sprintf(" %d%% closed", pct(hy.Closed, hy.Total)),
+	}
+	for _, s := range []struct {
+		n     int
+		st    string
+		style lipgloss.Style
+	}{
+		{hy.Open, "open", sDim},
+		{hy.InProgress, "in_progress", sWarn},
+		{hy.Blocked, "blocked", sErr},
+		{hy.Deferred, "deferred", sBlue},
+		{hy.Pinned, "pinned", sDim},
+	} {
+		if s.n > 0 {
+			chips = append(chips, s.style.Render(statusGlyph[s.st])+fmt.Sprintf(" %d %s", s.n, strings.ReplaceAll(s.st, "_", " ")))
+		}
+	}
+	return chips
+}
+
+// problemChips go green at zero and yellow otherwise; P0/P1 is a load figure, not a violation.
+func (v *triageView) problemChips() []string {
+	hy, act := v.health, v.health.Active()
+	chip := func(icon string, n int, label string) string {
+		st := sOK
+		if n > 0 {
+			st = sWarn
+		}
+		return st.Render(icon) + " " + st.Render(fmt.Sprintf("%d", n)) + " " + label
+	}
+	return []string{
+		chip(icStale, hy.Stale30, fmt.Sprintf("stale 30d+ %s", sDim.Render(fmt.Sprintf("%d%%", pct(hy.Stale30, act))))),
+		chip(icWaitBg, hy.Idle14, fmt.Sprintf("idle 14d+ %s", sDim.Render(fmt.Sprintf("%d%%", pct(hy.Idle14, act))))),
+		chip(icEstimate, hy.NoEstimate, "no estimate"),
+		chip(icUnowned, hy.Unassigned, "in progress unassigned"),
+		chip(icNoDescr, hy.NoDescr, "no description"),
+		sDim.Render(icPriority) + fmt.Sprintf(" %d P0/P1 %s", hy.HighPriority, sDim.Render(fmt.Sprintf("%d%%", pct(hy.HighPriority, act)))),
+	}
+}
+
+func pct(n, of int) int {
+	if of == 0 {
+		return 0
+	}
+	return n * 100 / of
+}
+
+// flowChips lays chips out left to right, starting a new line when the next one would pass w.
+func flowChips(w int, chips ...string) []string {
+	const sep = "   "
+	var lines []string
+	cur := ""
+	for _, c := range chips {
+		if cur != "" && lipgloss.Width(cur)+len(sep)+lipgloss.Width(c) > w {
+			lines = append(lines, cur)
+			cur = ""
+		}
+		if cur == "" {
+			cur = " " + c
+		} else {
+			cur += sep + c
+		}
+	}
+	lines = append(lines, cur)
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], w, "…")
+	}
+	return lines
 }
 
 func (v *triageView) Hints() []string {

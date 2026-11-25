@@ -26,6 +26,7 @@ var (
 	sWarn   = lipgloss.NewStyle().Foreground(cYellow)
 	sErr    = lipgloss.NewStyle().Foreground(cRed)
 	sOK     = lipgloss.NewStyle().Foreground(cGreen)
+	sBlue   = lipgloss.NewStyle().Foreground(cBlue)
 	sRule   = lipgloss.NewStyle().Foreground(cGray)
 	// badges: reversed colours give a background block that follows the terminal theme
 	sTabOn   = lipgloss.NewStyle().Bold(true).Foreground(cAccent).Reverse(true).Padding(0, 1)
@@ -52,6 +53,13 @@ const (
 	icEnded   = "\uf28d" // stop circle
 	icUnknown = "\uf128" // question
 	icLane    = "\uf0c9" // bars
+
+	icBeads    = "\uf1c0" // database
+	icStale    = "\uf017" // clock
+	icEstimate = "\uf1ec" // calculator
+	icUnowned  = "\uf007" // user
+	icNoDescr  = "\uf15b" // file
+	icPriority = "\uf024" // flag
 )
 
 var statusGlyph = map[string]string{
