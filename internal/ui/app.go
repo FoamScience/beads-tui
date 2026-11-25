@@ -117,7 +117,7 @@ func New(client bd.Client) *App {
 		idWidth:      8,
 		loading:      true,
 	}
-	a.views = []View{newNow(), newActivity(), newInbox(), newReady(), newMemories(), newKanban(), newMolecules(), newGraph(), newTriage(), newLive(), newGoals()}
+	a.views = []View{newNow(), newActivity(), newInbox(), newReady(), newMemories(), newKanban(), newWorkflows(), newGraph(), newTriage(), newLive(), newGoals()}
 	a.loadGoals()
 	if cached := loadCache(client.Dir); len(cached) > 0 {
 		a.setSnapshot(bd.NewSnapshot(cached))
@@ -354,10 +354,10 @@ func (a *App) selected() *bd.Issue {
 	return a.views[a.active].Selected()
 }
 
-// split shows the detail pane beside list views; Graph and Molecules use the full width themselves.
+// split shows the detail pane beside list views; Graph and Workflows use the full width themselves.
 func (a *App) split() bool {
 	switch a.views[a.active].(type) {
-	case *graphView, *moleculesView, *kanbanView, *liveView, *memoriesView, *goalsView:
+	case *graphView, *workflowsView, *kanbanView, *liveView, *memoriesView, *goalsView:
 		return false
 	}
 	return a.w >= splitMinWidth
@@ -479,7 +479,7 @@ func (a *App) key(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case "M":
 		switch a.views[a.active].(type) {
-		case *graphView, *moleculesView:
+		case *graphView:
 			return nil
 		}
 		a.modal = machinePicker(a)
@@ -665,7 +665,7 @@ func (a *App) header() string {
 // tabIcons are Nerd Font glyphs, one per view name.
 var tabIcons = map[string]string{
 	"Now": "\uf0e7", "Activity": "\uf1da", "Inbox": "\uf01c", "Backlog": "\uf0ae", "Memories": "\uf0eb",
-	"Board": "\uf0db", "Molecules": "\uf0c3", "Graph": "\uf126", "Triage": "\uf0b0", "Live": "\uf02d", "Goals": "\uf140",
+	"Board": "\uf0db", "Workflows": "\uf0c3", "Graph": "\uf126", "Triage": "\uf0b0", "Live": "\uf02d", "Goals": "\uf140",
 }
 
 var superscript = strings.NewReplacer("0", "⁰", "1", "¹", "2", "²", "3", "³", "4", "⁴", "5", "⁵", "6", "⁶", "7", "⁷", "8", "⁸", "9", "⁹")
@@ -724,7 +724,7 @@ func (a *App) footer() string {
 		}
 		hints = append(hints, a.views[a.active].Hints()...)
 		switch a.views[a.active].(type) {
-		case *moleculesView, *memoriesView:
+		case *workflowsView, *memoriesView:
 		default:
 			hints = append(hints, "s status", "n note", "c close")
 		}

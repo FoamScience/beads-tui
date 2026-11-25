@@ -42,19 +42,6 @@ type Formula struct {
 	Steps       []FormulaStep         `json:"steps"`
 }
 
-type Wisp struct {
-	ID     string `json:"id"`
-	Title  string `json:"title"`
-	Status string `json:"status"`
-}
-
-type StaleMolecule struct {
-	ID             string `json:"id"`
-	Title          string `json:"title"`
-	ClosedChildren int    `json:"closed_children"`
-	TotalChildren  int    `json:"total_children"`
-}
-
 func (c Client) Formulas() ([]FormulaSummary, error) {
 	var out []FormulaSummary
 	err := c.runJSON(&out, "formula", "list")
@@ -65,22 +52,6 @@ func (c Client) Formula(name string) (Formula, error) {
 	var f Formula
 	err := c.runJSON(&f, "formula", "show", name)
 	return f, err
-}
-
-func (c Client) Wisps() ([]Wisp, error) {
-	var out struct {
-		Wisps []Wisp `json:"wisps"`
-	}
-	err := c.runJSON(&out, "mol", "wisp", "list")
-	return out.Wisps, err
-}
-
-func (c Client) Stale() ([]StaleMolecule, error) {
-	var out struct {
-		Stale []StaleMolecule `json:"stale_molecules"`
-	}
-	err := c.runJSON(&out, "mol", "stale")
-	return out.Stale, err
 }
 
 // Snapshot turns formula steps into issues so the graph view can lay them out.

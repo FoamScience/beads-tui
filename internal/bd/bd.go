@@ -47,6 +47,7 @@ type Issue struct {
 	ExternalRef        string          `json:"external_ref"`
 	EstimatedMinutes   int             `json:"estimated_minutes"`
 	CloseReason        string          `json:"close_reason"`
+	Ephemeral          bool            `json:"ephemeral"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
 	StartedAt          *time.Time      `json:"started_at"`
@@ -194,7 +195,7 @@ func (c Client) runJSON(v any, args ...string) error {
 
 func (c Client) List() ([]Issue, error) {
 	var out []Issue
-	err := c.runJSON(&out, "list", "--all", "--limit", "0")
+	err := c.runJSON(&out, "list", "--all", "--limit", "0", "--include-ephemeral")
 	return out, err
 }
 

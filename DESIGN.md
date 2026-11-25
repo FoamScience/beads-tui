@@ -44,7 +44,7 @@ The wheel acts on what is under the pointer. Over a text pane (the detail pane, 
 
 ## Machine filter
 
-One filter, chosen with `M` from any list tab and remembered, applies to Now, Backlog, Memories, Triage, Activity, Inbox and Board: beads labelled for the selected machine (this one by default, or any `machine:` host, or all), plus beads with no machine label, which belong to nobody and so show everywhere. Graph keeps the whole dependency graph so no edge loses an end; search follows the filter too but `tab` inside it widens to every machine; Molecules stay global, and so does `bt triage` unless given `--machine`; Goals filters only its list of next beads, so goal scores read the same on every machine.
+One filter, chosen with `M` from any list tab and remembered, applies to Now, Backlog, Memories, Triage, Activity, Inbox, Board and the molecules and wisps in Workflows: beads labelled for the selected machine (this one by default, or any `machine:` host, or all), plus beads with no machine label, which belong to nobody and so show everywhere. Graph keeps the whole dependency graph so no edge loses an end; search follows the filter too but `tab` inside it widens to every machine; formulas stay global (they are files), and so does `bt triage` unless given `--machine`; Goals filters only its list of next beads, so goal scores read the same on every machine.
 
 ## Information architecture
 
@@ -58,7 +58,7 @@ Five views, one shared detail pane. Number keys switch views.
 | `4` | **Backlog**: unblocked work, filter by machine/label/epic | `bd ready` |
 | `5` | **Memories**: the `bd remember` store, keys on the left and the selected memory wrapped on the right; `f` filters by key or content, `a` remembers, `A` remembers for this machine, `D` forgets, `y` copies the key | `bd memories`, `bd remember`, `bd forget` |
 | `6` / `b` | **Board**: kanban lanes Ready, Blocked, In progress, Deferred, Done (last 7 days), non-epic issues only; `h/l` columns, `j/k` cards, `H/L` move the card (or the marked cards) to the next lane, which sets its status; `E` scopes the board to one epic | `bd update --status`, close flow for Done |
-| `7` | **Molecules**: formulas, protos, live molecules and wisps | `bd formula`, `bd cook`, `bd mol pour/wisp/progress/squash/burn` |
+| `7` | **Workflows**: formulas, protos, live molecules and wisps | `bd formula`, `bd cook`, `bd mol pour/wisp/progress/squash/burn` |
 | `8` | **Graph**: dependency DAG of an epic or issue, navigable; boxes wrap the full title and list each agent session recorded on the bead (`▶` working, `◦` idle, `○` ended), and every row is as tall as its tallest box so edges stay straight | `bd graph`, `bd dep`, `bd blocked` |
 | `9` | **Triage**: hygiene violations (including open or in-progress non-epic beads no agent session has claimed), fixable inline | the jq one-liner, wl ref chores |
 | `0` | **Live**: live ledgers (status `pinned`, label `live`, machine-filtered) rendered as ledgers: summary, the Current state table as an aligned grid, the Log newest first with date chips, and the design field as a plain-text Runbook; a ⚠ line names any departure from the ledger format in the beads skill. `+` appends a dated log line and `E` edits the description in `$EDITOR`, both written back with `bd update --body-file -` | `bd update --body-file -` |
@@ -162,7 +162,7 @@ Writes are optimistic: the row updates at once, and a failed command reverts it 
 
 ## Data and refresh
 
-- One full snapshot (`bd list --json --all --limit 0`) held in memory; views are filters over it. Each bd call costs 2 to 7 s on this machine (opening the embedded Dolt DB dominates, so incremental queries are no cheaper).
+- One full snapshot (`bd list --json --all --limit 0 --include-ephemeral`) held in memory; views are filters over it. Each bd call costs 2 to 7 s on this machine (opening the embedded Dolt DB dominates, so incremental queries are no cheaper).
 - The last snapshot is cached in `~/.cache/bt/`, so bt draws in about 0.25 s and refreshes in the background.
 - Change detection reads the Dolt manifest once a second and reloads only when its contents change. Its mtime cannot be used: read-only bd calls rewrite the file. A full reload also runs every 2 minutes; a failed load retries after 5 s.
 - Loads carry a generation number, and a snapshot that arrives while a write is in flight is dropped, so optimistic edits never flicker back.
@@ -191,14 +191,14 @@ Layered DAG computed from the in-memory snapshot with the same layering as `bd g
 - Edit edges in place: `D` add a dependency (pick target, pick type), `X` remove the selected edge. Each edit runs `bd dep add/remove`, then `bd swarm validate`, and shows a new cycle or reversed edge in the footer before it hits the rest of the graph.
 - Wide graphs scroll horizontally; layers wider than the screen collapse to `+N more`, which expands on `Enter`.
 
-### 7 Molecules
+### 7 Workflows
 
-Three panes: formulas (from all `bd formula list` search paths), live molecules and wisps (with `bd mol progress`), and a preview.
+One tab for everything workflow-related, opening with the machine card like the other tabs. Three panes: formulas (from all `bd formula list` search paths), live molecules and wisps, and a preview. Molecules and wisps come from the snapshot, which reads `bd list --all --include-ephemeral` so wisps arrive with the rest; separate `bd mol wisp list` / `bd mol stale` reads ran into the read timeout while Dolt was locked. The snapshot keeps the ephemeral rows apart, so wisps show only here: no other tab, triage rule, hygiene count or `bt dispatch` sees them, and the disk cache leaves them out.
 
 - **Author:** `n` scaffolds a new `.formula.toml` in `~/tasks/.beads/formulas/`; `E` opens the selected one in `$EDITOR`. When the editor exits, the TUI runs `bd cook <formula>` (compile mode), reports the parse error in the footer if there is one, and reloads the preview.
 - **Distill:** `d` on an epic runs `bd mol distill` to turn ad-hoc work into a formula, then opens it for editing.
 - **Pour / wisp:** `p` / `w` opens a form with one field per declared variable (defaults filled in), shows the `--dry-run` result, then creates it. Afterwards the same form sets the new root's parent, title and labels. `local-e2e.formula.toml` documents these three follow-up commands as a manual step that leaves a stray root when skipped, so the TUI does them as part of the pour.
-- **Lifecycle:** `Q` squash, `B` burn (confirm, irreversible), plus `bd mol stale` results flagged in the list. `S` stays the global sync key.
+- **Lifecycle:** `Q` squash, `B` burn (confirm, irreversible), plus stale molecules (an open root whose direct children are all closed, as `bd mol stale` counts them) flagged in the list and counted in the card. Wisps are never stale: all steps closed under an open root is how a wisp waits for its squash. `S` stays the global sync key.
 - **Preview:** a formula shows its vars and a step DAG drawn with the Graph renderer (shared title prefix such as `local-e2e {{change}}: ` is trimmed); `h/l` moves between layers and `J/K` within a layer (`j/k` stay on the list). A molecule or wisp shows its live graph.
 
 ## Out of scope for v1

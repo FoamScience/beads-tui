@@ -725,3 +725,116 @@ func TestEpicBarsShareAColumn(t *testing.T) {
 		t.Fatalf("epic bars start in columns %v, want one", cols)
 	}
 }
+
+func TestWorkflowsFromSnapshot(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+	now := time.Now()
+	issues := append(fixture(),
+		bd.Issue{ID: "t-mol-1", Title: "done pour", IssueType: "molecule", Status: "open", UpdatedAt: now},
+		bd.Issue{ID: "t-mol-2", Parent: "t-mol-1", Title: "step", IssueType: "task", Status: "closed", UpdatedAt: now},
+		bd.Issue{ID: "t-mol-3", Title: "other pour", IssueType: "molecule", Status: "open", Labels: []string{"machine:other"}, UpdatedAt: now},
+		bd.Issue{ID: "t-mol-4", Parent: "t-a", Title: "pour under an epic", IssueType: "molecule", Status: "open", UpdatedAt: now.Add(-time.Hour)},
+		bd.Issue{ID: "t-mol-5", Parent: "t-mol-4", Title: "nested sub-molecule", IssueType: "molecule", Status: "open", UpdatedAt: now},
+		bd.Issue{ID: "t-mol-9", Parent: "t-mol-gone", Title: "step of a burned root", IssueType: "task", Status: "open", UpdatedAt: now},
+		bd.Issue{ID: "t-wisp-1", Title: "patrol", IssueType: "molecule", Status: "open", Ephemeral: true, UpdatedAt: now},
+		bd.Issue{ID: "t-wisp-2", Parent: "t-wisp-1", Title: "wisp step", IssueType: "task", Status: "closed", Ephemeral: true, UpdatedAt: now},
+		bd.Issue{ID: "t-wisp-8", Parent: "t-wisp-gone", Title: "step of a squashed wisp", IssueType: "task", Status: "open", Ephemeral: true, UpdatedAt: now},
+	)
+	a.Update(snapshotMsg{issues: issues, gen: a.gen})
+	a.switchTo(a.viewIndex("Workflows"))
+	v := a.views[a.active].(*workflowsView)
+	if out := ansi.Strip(a.render()); strings.Contains(out, "formulas ·") || !strings.Contains(out, "loading formulas") {
+		t.Fatalf("counts shown before the formulas loaded:\n%s", out)
+	}
+	v.Msg(a, molDataMsg{})
+	sections := func() map[string][]string {
+		m, cur := map[string][]string{}, ""
+		for _, it := range v.items {
+			if it.header != "" {
+				cur = it.header
+			} else if it.issue != nil {
+				m[cur] = append(m[cur], it.issue.ID)
+			}
+		}
+		return m
+	}
+	sec := sections()
+	if got := fmt.Sprint(sec["Molecules"], sec["Wisps"]); got != "[t-mol-1 t-mol-4] [t-wisp-1]" {
+		t.Fatalf("molecules and wisps = %s, want [t-mol-1 t-mol-4] [t-wisp-1]: no other machine, nested or orphan roots", got)
+	}
+	out := ansi.Strip(a.render())
+	var bar string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "formulas ·") {
+			bar = l
+		}
+	}
+	if !strings.Contains(bar, "2 molecules · 1 wisps") || !strings.Contains(bar, "1 stale") {
+		t.Fatalf("Workflows card wrong: %q", bar)
+	}
+	if !strings.Contains(out, "done pour 1/1 stale") {
+		t.Fatalf("molecule with every step closed not flagged stale:\n%s", out)
+	}
+	if !strings.Contains(out, "patrol 1/1") || strings.Contains(out, "patrol 1/1 stale") {
+		t.Fatalf("a wisp waiting for its squash is not stale:\n%s", out)
+	}
+	a.state.Machine = allMachines
+	a.rebuild()
+	if got := fmt.Sprint(sections()["Molecules"]); got != "[t-mol-1 t-mol-3 t-mol-4]" {
+		t.Fatalf("all machines: molecules %s, want the other machine's pour too", got)
+	}
+}
+
+func TestWispsStayOutOfOtherViews(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.state.Machine = allMachines
+	a.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	issues := append(fixture(),
+		bd.Issue{ID: "t-wisp-1", Title: "patrol", IssueType: "molecule", Status: "open", Ephemeral: true, UpdatedAt: old},
+		bd.Issue{ID: "t-wisp-2", Parent: "t-wisp-1", Title: "ready wisp step", IssueType: "task", Status: "open", Priority: 1, Ephemeral: true, UpdatedAt: old},
+		bd.Issue{ID: "t-wisp-3", Parent: "t-wisp-1", Title: "running wisp step", IssueType: "task", Status: "in_progress", Ephemeral: true, UpdatedAt: old},
+	)
+	a.Update(snapshotMsg{issues: issues, gen: a.gen})
+	if a.snap.ByID["t-wisp-2"] != nil || len(a.snap.Ephemeral.Issues) != 3 {
+		t.Fatalf("wisps not split out of the snapshot: %d ephemeral", len(a.snap.Ephemeral.Issues))
+	}
+	if !a.snap.Ephemeral.Ready(a.snap.Ephemeral.ByID["t-wisp-2"]) {
+		t.Fatal("the wisp step is ready on its own, so the views below only miss it through the split")
+	}
+	for _, name := range []string{"Now", "Backlog", "Triage", "Activity", "Board"} {
+		v := a.views[a.viewIndex(name)]
+		var ids []string
+		if k, ok := v.(*kanbanView); ok {
+			for _, col := range k.cards {
+				for _, is := range col {
+					ids = append(ids, is.ID)
+				}
+			}
+		} else {
+			for _, r := range rowsOf(v) {
+				if r.issue != nil {
+					ids = append(ids, r.issue.ID)
+				}
+			}
+		}
+		for _, id := range ids {
+			if strings.HasPrefix(id, "t-wisp") {
+				t.Errorf("%s shows wisp %s", name, id)
+			}
+		}
+	}
+	if h := a.snap.Measure(a.snap.Issues, time.Now()); h.Total != len(fixture()) || h.Stale30 != 0 {
+		t.Errorf("hygiene counts wisps: total %d stale %d, want %d and 0", h.Total, h.Stale30, len(fixture()))
+	}
+	for _, r := range a.snap.Triage() {
+		for _, is := range r.Issues {
+			if is.Ephemeral {
+				t.Errorf("triage rule %s lists wisp %s", r.ID, is.ID)
+			}
+		}
+	}
+}
