@@ -48,6 +48,10 @@ type Issue struct {
 	EstimatedMinutes   int             `json:"estimated_minutes"`
 	CloseReason        string          `json:"close_reason"`
 	Ephemeral          bool            `json:"ephemeral"`
+	AwaitType          string          `json:"await_type"`
+	AwaitID            string          `json:"await_id"`
+	Timeout            Timeout         `json:"timeout"`
+	Waiters            []string        `json:"waiters"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
 	StartedAt          *time.Time      `json:"started_at"`
@@ -58,6 +62,28 @@ type Issue struct {
 	DependentCount     int             `json:"dependent_count"`
 	CommentCount       int             `json:"comment_count"`
 	Metadata           json.RawMessage `json:"metadata"`
+}
+
+// Timeout is a gate's timeout. bd 1.3.4 emits integer nanoseconds or null; a duration string is
+// read too, and anything else decodes to zero rather than failing the whole snapshot.
+type Timeout time.Duration
+
+func (t Timeout) Duration() time.Duration { return time.Duration(t) }
+
+func (t *Timeout) UnmarshalJSON(b []byte) error {
+	var n int64
+	if json.Unmarshal(b, &n) == nil {
+		*t = Timeout(n)
+		return nil
+	}
+	var s string
+	if json.Unmarshal(b, &s) == nil {
+		d, _ := time.ParseDuration(s)
+		*t = Timeout(d)
+		return nil
+	}
+	*t = 0
+	return nil
 }
 
 type Comment struct {
@@ -195,7 +221,7 @@ func (c Client) runJSON(v any, args ...string) error {
 
 func (c Client) List() ([]Issue, error) {
 	var out []Issue
-	err := c.runJSON(&out, "list", "--all", "--limit", "0", "--include-ephemeral")
+	err := c.runJSON(&out, "list", "--all", "--limit", "0", "--include-ephemeral", "--include-gates")
 	return out, err
 }
 

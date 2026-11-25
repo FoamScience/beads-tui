@@ -78,7 +78,8 @@ func saveCache(beadsDir string, is []bd.Issue) {
 	if p == "" || os.MkdirAll(filepath.Dir(p), 0o755) != nil {
 		return
 	}
-	b, err := json.Marshal(slices.DeleteFunc(slices.Clone(is), func(i bd.Issue) bool { return i.Ephemeral }))
+	// every gate stays, ephemeral or not, so the cached draw keeps their waiters blocked
+	b, err := json.Marshal(slices.DeleteFunc(slices.Clone(is), func(i bd.Issue) bool { return i.Ephemeral && i.IssueType != "gate" }))
 	if err != nil {
 		return
 	}

@@ -54,7 +54,7 @@ type molItem struct {
 	header      string
 	formula     *bd.FormulaSummary
 	issue       *bd.Issue
-	src         *bd.Snapshot // the snapshot holding issue: a.snap, or a.snap.Ephemeral for a wisp
+	src         *bd.Snapshot // the snapshot holding issue: a.snap, a.snap.Ephemeral or a.snap.Gates
 	done, total int
 	stale       bool
 }
@@ -70,7 +70,7 @@ type workflowsView struct {
 	showClosed bool
 	preview    *graphView
 
-	nMols, nWisps, nStale int
+	nMols, nWisps, nStale, nGates int
 }
 
 func newWorkflows() *workflowsView {
@@ -155,6 +155,14 @@ func (v *workflowsView) Rebuild(a *App) {
 			v.items = append(v.items, rootItem(a.snap.Ephemeral, is))
 		}
 	}
+	gates := v.gates(a)
+	v.nGates = len(gates)
+	if len(gates) > 0 {
+		v.items = append(v.items, molItem{header: "Gates"})
+		for _, is := range gates {
+			v.items = append(v.items, molItem{issue: is, src: a.snap.Gates})
+		}
+	}
 	v.cursor = 1
 	for i, it := range v.items {
 		if it.header == "" && v.itemKey(it) == keep {
@@ -175,6 +183,38 @@ func (v *workflowsView) roots(a *App, src *bd.Snapshot) []*bd.Issue {
 	slices.SortFunc(out, func(x, y *bd.Issue) int { return y.UpdatedAt.Compare(x.UpdatedAt) })
 	return out
 }
+
+// gates lists the gates whose waiters pass the machine filter (a gate with no waiter always
+// shows), newest first.
+func (v *workflowsView) gates(a *App) []*bd.Issue {
+	var out []*bd.Issue
+	for _, is := range a.snap.Gates.Issues {
+		if !v.showClosed && is.Closed() {
+			continue
+		}
+		ws := waiters(a.snap.Gates, is)
+		if len(ws) == 0 || slices.ContainsFunc(ws, a.machineMatch) {
+			out = append(out, is)
+		}
+	}
+	slices.SortFunc(out, func(x, y *bd.Issue) int { return y.UpdatedAt.Compare(x.UpdatedAt) })
+	return out
+}
+
+// waiters returns the issues a gate blocks.
+func waiters(s *bd.Snapshot, gate *bd.Issue) []*bd.Issue {
+	var out []*bd.Issue
+	for _, d := range s.Dependents(gate.ID) {
+		if bd.Blocking(d.Type) {
+			if w := s.Find(d.IssueID); w != nil {
+				out = append(out, w)
+			}
+		}
+	}
+	return out
+}
+
+func isGate(it *molItem) bool { return it != nil && it.issue != nil && it.issue.IssueType == "gate" }
 
 func rootItem(src *bd.Snapshot, is *bd.Issue) molItem {
 	it := molItem{issue: is, src: src}
@@ -340,8 +380,48 @@ func (v *workflowsView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 			return true, v.loadFormula(a, it.formula.Name)
 		}
 		return true, v.askVars(a, spawnSpec{formula: f.Name, wisp: k.String() == "w", vars: map[string]string{}}, f)
+	case "G":
+		if !isGate(it) || it.issue.Closed() {
+			return true, flash("select an open gate to resolve")
+		}
+		g := it.issue
+		a.modal = newPrompt("Resolve gate "+a.shortID(g.ID)+": reason (optional)", "", func(r string) tea.Cmd {
+			args := []string{"gate", "resolve", g.ID}
+			if r = strings.TrimSpace(r); r != "" {
+				args = append(args, "--reason", r)
+			}
+			title := "Resolve gate " + a.shortID(g.ID) + "? This closes it"
+			if ws := waiters(a.snap.Gates, g); len(ws) > 0 {
+				lines := make([]string, len(ws))
+				for i, w := range ws {
+					lines[i] = "  " + a.shortID(w.ID) + "  " + w.Title
+				}
+				title += " and unblocks:\n\n" + strings.Join(lines, "\n")
+			}
+			a.modal = newConfirm(title, func() tea.Cmd {
+				return a.write("resolve gate "+a.shortID(g.ID), a.mut(g.ID, func(i *bd.Issue) { i.Status = "closed" }), args...)
+			})
+			return nil
+		})
+		return true, nil
+	case "T":
+		if !isGate(it) {
+			return true, flash("select a gate to check gates")
+		}
+		n := 0
+		for _, g := range a.snap.Gates.Issues {
+			if !g.Closed() {
+				n++
+			}
+		}
+		a.modal = newConfirm(fmt.Sprintf("Run bd gate check over all %d open gates, on every machine?\n\n"+
+			"It evaluates timer, bead, gh:run and gh:pr gates (the gh ones call the gh CLI) and closes\n"+
+			"each gate whose condition is met, unblocking its waiters. Human gates stay open; nothing is escalated.", n), func() tea.Cmd {
+			return a.write("gate check", nil, "gate", "check")
+		})
+		return true, nil
 	case "Q", "B":
-		if it == nil || it.formula != nil {
+		if it == nil || it.formula != nil || isGate(it) {
 			return true, flash("select a molecule")
 		}
 		is := it.issue
@@ -607,7 +687,7 @@ func (v *workflowsView) spawn(a *App, spec spawnSpec) tea.Cmd {
 }
 
 func (v *workflowsView) Hints() []string {
-	return []string{"p pour", "w wisp", "n new", "E edit", "d distill", "Q squash", "B burn", "X wisp gc", "h/l J/K steps", "H closed", "M machine"}
+	return []string{"p pour", "w wisp", "n new", "E edit", "d distill", "Q squash", "B burn", "X wisp gc", "G resolve gate", "T check gates", "h/l J/K steps", "H closed", "M machine"}
 }
 
 func (v *workflowsView) Render(a *App, w, h int) string {
@@ -624,6 +704,9 @@ func (v *workflowsView) Render(a *App, w, h int) string {
 	chips := []string{sDim.Render(plural(len(v.formulas), "formula") + " · " + plural(v.nMols, "molecule") + " · " + wisps)}
 	if v.nStale > 0 {
 		chips = append(chips, sWarn.Render(fmt.Sprintf("%d stale", v.nStale)))
+	}
+	if v.nGates > 0 {
+		chips = append(chips, sDim.Render(fmt.Sprintf("%d gates", v.nGates)))
 	}
 	top := header(a, w, chips...)
 	bar := strings.Join(top, "\n")
@@ -670,6 +753,9 @@ func (v *workflowsView) renderList(a *App, w, h int) string {
 				title = sSel.Render(title)
 			}
 			tag := sDim.Render(fmt.Sprintf(" %d/%d", it.done, it.total))
+			if isGate(&it) {
+				tag = sDim.Render(" " + is.AwaitType)
+			}
 			if it.stale {
 				tag += sWarn.Render(" stale")
 			}
@@ -691,6 +777,9 @@ func (v *workflowsView) renderPreview(a *App, w, h int) string {
 	if it.formula != nil {
 		return v.formulaPreview(a, it.formula, w, h)
 	}
+	if isGate(it) {
+		return gatePreview(a, it.issue, w, h)
+	}
 	g := v.preview
 	if g.rootID != it.issue.ID {
 		g.rootID, g.sel, g.offX, g.offY = it.issue.ID, "", 0, 0
@@ -701,6 +790,56 @@ func (v *workflowsView) renderPreview(a *App, w, h int) string {
 	}
 	g.Rebuild(a)
 	return g.Render(a, w, h)
+}
+
+// gatePreview fits h rows: the waiter list gives way first, the action hint stays on the last row.
+func gatePreview(a *App, g *bd.Issue, w, h int) string {
+	s := a.snap.Gates
+	lines := []string{glyph(s, g) + " " + sBold.Render(g.Title) + sDim.Render("  "+a.shortID(g.ID)+" · "+g.Status)}
+	kv := func(k, val string) {
+		if val != "" {
+			lines = append(lines, " "+sKey.Render(k)+" "+val)
+		}
+	}
+	kv("await", g.AwaitType)
+	kv("on", g.AwaitID)
+	if d := g.Timeout.Duration(); d > 0 {
+		kv("timeout", d.String()+sDim.Render("  (expires "+g.CreatedAt.Add(d).Local().Format("Jan 2 15:04")+")"))
+	}
+	kv("created", age(g.CreatedAt)+" ago")
+	kv("notify", strings.Join(g.Waiters, ", "))
+	if d := strings.TrimSpace(g.Description); d != "" {
+		desc := strings.Split(ansi.Wordwrap(d, w, " "), "\n")
+		if len(desc) > 4 {
+			desc = append(desc[:3], "…")
+		}
+		lines = append(append(lines, ""), desc...)
+	}
+	var tail []string
+	if !g.Closed() {
+		tail = []string{"", sDim.Render("G resolve · T check all gates · c close")}
+	}
+	ws := waiters(s, g)
+	lines = append(lines, "", sSection.Render(fmt.Sprintf("Blocks (%d)", len(ws))))
+	room := max(h-len(lines)-len(tail), 0)
+	for i, x := range ws {
+		if i == room-1 && len(ws) > room {
+			lines = append(lines, sDim.Render(fmt.Sprintf(" … %d more", len(ws)-i)))
+			break
+		}
+		if i == room {
+			break
+		}
+		lines = append(lines, " "+glyph(s.Of(x), x)+" "+a.shortID(x.ID)+"  "+x.Title)
+	}
+	if len(lines)+len(tail) > h {
+		lines = lines[:max(h-len(tail), 0)]
+	}
+	lines = append(lines, tail...)
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], w, "…")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (v *workflowsView) formulaPreview(a *App, s *bd.FormulaSummary, w, h int) string {
