@@ -177,12 +177,22 @@ func (v *kanbanView) Render(a *App, w, h int) string {
 	if e := a.snap.ByID[a.state.BoardEpic]; e != nil {
 		scope = a.shortID(e.ID) + " " + e.Title
 	}
-	bar := ansi.Truncate(fmt.Sprintf(" %s   %s %s", machineChip(a), sDim.Render("scope"), scope), w, "…")
-	h -= 2
-
 	// show as many columns as fit, keeping the focused one in the window
 	n := clamp(w/minColW, 1, len(kanbanColumns))
 	first := clamp(v.col-n/2, 0, len(kanbanColumns)-n)
+	chips := []string{sDim.Render("scope ") + scope}
+	more := ""
+	if first > 0 {
+		more += "◂ "
+	}
+	if first+n < len(kanbanColumns) {
+		more += "▸"
+	}
+	if more != "" {
+		chips = append(chips, sDim.Render(more))
+	}
+	top := header(a, w, chips...)
+	h -= len(top)
 	cw := (w - (n - 1)) / n
 	cols := make([][]string, n)
 	for i := range n {
@@ -208,14 +218,7 @@ func (v *kanbanView) Render(a *App, w, h int) string {
 			b.WriteByte('\n')
 		}
 	}
-	more := ""
-	if first > 0 {
-		more += "◂ "
-	}
-	if first+n < len(kanbanColumns) {
-		more += "▸"
-	}
-	return bar + strings.Repeat(" ", max(w-ansi.StringWidth(bar)-ansi.StringWidth(more), 1)) + sDim.Render(more) + "\n\n" + b.String()
+	return strings.Join(top, "\n") + "\n" + b.String()
 }
 
 func (v *kanbanView) renderColumn(a *App, c, w, h int) []string {

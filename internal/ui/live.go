@@ -189,10 +189,11 @@ func (v *liveView) Hints() []string {
 }
 
 func (v *liveView) Render(a *App, w, h int) string {
-	bar := ansi.Truncate(fmt.Sprintf(" %s   %s", machineChip(a), sDim.Render(fmt.Sprintf("%d live ledgers", len(v.ledgers)))), w, "…")
-	h -= 2
+	top := header(a, w, sDim.Render(fmt.Sprintf("%d live ledgers", len(v.ledgers))))
+	bar := strings.Join(top, "\n")
+	h -= len(top)
 	if len(v.ledgers) == 0 {
-		return bar + "\n\n" + sDim.Render("  no live ledgers (pinned beads labelled live) for this filter")
+		return bar + "\n" + sDim.Render("  no live ledgers (pinned beads labelled live) for this filter")
 	}
 	lw := min(max(w/4, 26), 38)
 	v.paneX = lw + 3
@@ -207,7 +208,7 @@ func (v *liveView) Render(a *App, w, h int) string {
 		v.pg.SetContent(renderLedger(a, is, rw), reset)
 	}
 	sep := strings.TrimRight(strings.Repeat(sRule.Render("│")+"\n", h), "\n")
-	return bar + "\n\n" + lipgloss.JoinHorizontal(lipgloss.Top,
+	return bar + "\n" + lipgloss.JoinHorizontal(lipgloss.Top,
 		lipgloss.NewStyle().Width(lw).Height(h).MaxHeight(h).Render(left), " ", sep, " ", v.pg.View())
 }
 

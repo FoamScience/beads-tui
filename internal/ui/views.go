@@ -10,25 +10,17 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/FoamScience/beads-tui/internal/bd"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // listView is the common shape: rows built from the snapshot, shared list navigation.
 type listView struct {
 	issueList
 	empty string
-	bar   bool // draw the machine filter line above the list
 }
 
 func (v *listView) Selected() *bd.Issue { return v.issueList.Selected() }
 
-func (v *listView) Render(a *App, w, h int) string {
-	if v.bar {
-		bar := ansi.Truncate(" "+machineChip(a), w, "…")
-		return bar + "\n\n" + v.body(a, w, h-2)
-	}
-	return v.body(a, w, h)
-}
+func (v *listView) Render(a *App, w, h int) string { return v.body(a, w, h) }
 
 func (v *listView) body(a *App, w, h int) string {
 	if a.loading && len(a.snap.Issues) == 0 {
@@ -185,11 +177,10 @@ func (v *nowView) Render(a *App, w, h int) string {
 			chips = append(chips, sChipOn.Render(s))
 		}
 	}
+	top := header(a, w, sDim.Render(icStatus)+" "+strings.Join(chips, " "))
 	right := v.columnLabels(w)
-	bar := fmt.Sprintf(" %s   %s %s", machineChip(a), sDim.Render(icStatus), strings.Join(chips, " "))
-	bar = ansi.Truncate(bar, w-ansi.StringWidth(right)-1, "…")
-	bar += strings.Repeat(" ", max(w-ansi.StringWidth(bar)-ansi.StringWidth(right), 1)) + right
-	return bar + "\n\n" + v.listView.Render(a, w, h-2)
+	labels := padLeft(right, w)
+	return strings.Join(top, "\n") + "\n" + labels + "\n" + v.listView.Render(a, w, h-len(top)-1)
 }
 
 func (v *nowView) Hints() []string { return []string{"f statuses", "M machine", "[/] group"} }
@@ -272,8 +263,8 @@ func (v *readyView) Render(a *App, w, h int) string {
 	if f == "" {
 		f = sDim.Render("none")
 	}
-	bar := fmt.Sprintf(" %s   %s %s   %s", machineChip(a), sDim.Render("filter"), f, sDim.Render(fmt.Sprintf("%d ready", n)))
-	return ansi.Truncate(bar, w, "…") + "\n\n" + v.listView.Render(a, w, h-2)
+	top := header(a, w, sDim.Render("filter ")+f, sDim.Render(fmt.Sprintf("%d ready", n)))
+	return strings.Join(top, "\n") + "\n" + v.listView.Render(a, w, h-len(top))
 }
 
 func (v *readyView) Hints() []string { return []string{"f filter", "M machine", "C claim", "a new"} }
@@ -344,13 +335,13 @@ func (v *activityView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 }
 
 func (v *activityView) Render(a *App, w, h int) string {
-	bar := " " + machineChip(a)
+	var chips []string
 	if p := a.pulseHeader(); p != "" {
-		bar += "   " + p
+		chips = append(chips, p)
 	}
-	bar = ansi.Truncate(bar, w, "…")
-	strip := a.renderAgents(w, h-2)
-	return bar + "\n\n" + strip + v.body(a, w, h-2-strings.Count(strip, "\n"))
+	top := header(a, w, chips...)
+	strip := a.renderAgents(w, h-len(top))
+	return strings.Join(top, "\n") + "\n" + strip + v.body(a, w, h-len(top)-strings.Count(strip, "\n"))
 }
 
 func (v *activityView) Hints() []string { return []string{"[/] day"} }
@@ -394,21 +385,18 @@ func (v *triageView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 	return v.HandleKey(k.String()), nil
 }
 
-// Render puts the hygiene metrics of the filtered beads above the rule violations. The header
-// takes at most a third of the height: the status breakdown goes first, then problem chips past the budget.
+// Render puts the hygiene metrics of the filtered beads above the rule violations, as a status
+// card and a health card. The cards take at most a third of the height: past that the status card goes.
 func (v *triageView) Render(a *App, w, h int) string {
-	lines := flowChips(w, machineChip(a))
+	lines := header(a, w)
 	if v.health.Total > 0 {
-		budget := max(h/3, 1)
-		problems := flowChips(w, v.problemChips()...)
-		lines = append(flowChips(w, append([]string{machineChip(a)}, v.summaryChips()...)...), problems...)
+		budget := max(h/3, 3)
+		lines = cards(w, budget, card{machineChip(a), v.summaryChips()}, card{sDim.Render("health"), v.problemChips()})
 		if len(lines) > budget {
-			lines = append(flowChips(w, machineChip(a)), problems...)
+			lines = cards(w, budget, card{machineChip(a) + sDim.Render(" · health"), v.problemChips()})
 		}
-		lines = lines[:min(len(lines), budget)]
 	}
-	top := strings.Join(lines, "\n")
-	return top + "\n\n" + v.body(a, w, h-len(lines)-1)
+	return strings.Join(lines, "\n") + "\n" + v.body(a, w, h-len(lines)-1)
 }
 
 func (v *triageView) summaryChips() []string {
@@ -460,29 +448,6 @@ func pct(n, of int) int {
 		return 0
 	}
 	return n * 100 / of
-}
-
-// flowChips lays chips out left to right, starting a new line when the next one would pass w.
-func flowChips(w int, chips ...string) []string {
-	const sep = "   "
-	var lines []string
-	cur := ""
-	for _, c := range chips {
-		if cur != "" && lipgloss.Width(cur)+len(sep)+lipgloss.Width(c) > w {
-			lines = append(lines, cur)
-			cur = ""
-		}
-		if cur == "" {
-			cur = " " + c
-		} else {
-			cur += sep + c
-		}
-	}
-	lines = append(lines, cur)
-	for i := range lines {
-		lines[i] = ansi.Truncate(lines[i], w, "…")
-	}
-	return lines
 }
 
 func (v *triageView) Hints() []string {
@@ -568,8 +533,8 @@ func (v *inboxView) Render(a *App, w, h int) string {
 	if v.showClosed {
 		what = "incl. handled"
 	}
-	bar := fmt.Sprintf(" %s   %s", machineChip(a), sDim.Render(fmt.Sprintf("%d %s", n, what)))
-	return ansi.Truncate(bar, w, "…") + "\n\n" + v.listView.Render(a, w, h-2)
+	top := header(a, w, sDim.Render(fmt.Sprintf("%d %s", n, what)))
+	return strings.Join(top, "\n") + "\n" + v.listView.Render(a, w, h-len(top))
 }
 
 func (v *inboxView) Hints() []string {

@@ -321,7 +321,18 @@ func TestTriageHygieneFollowsMachineFilter(t *testing.T) {
 	issues := append(fixture(), bd.Issue{ID: "t-o", Title: "Other", IssueType: "task", Status: "open", Labels: []string{"machine:other"}, UpdatedAt: time.Now()})
 	a.Update(snapshotMsg{issues: issues, gen: a.gen})
 	v := a.views[a.viewIndex("Triage")].(*triageView)
-	head := func(w int) string { return ansi.Strip(strings.SplitN(v.Render(a, w, 30), "\n\n", 2)[0]) }
+	// the card block ends at the last bottom border
+	cardsOf := func(out string) string {
+		lines := strings.Split(ansi.Strip(out), "\n")
+		end := 0
+		for i, l := range lines {
+			if strings.HasPrefix(l, "╰") {
+				end = i + 1
+			}
+		}
+		return strings.Join(lines[:end], "\n")
+	}
+	head := func(w int) string { return cardsOf(v.Render(a, w, 30)) }
 	for _, want := range []string{"5 beads", "20% closed", "1 in progress", "1 blocked", "1 in progress unassigned"} {
 		if !strings.Contains(head(200), want) {
 			t.Errorf("this machine: %q missing from %q", want, head(200))
@@ -332,7 +343,10 @@ func TestTriageHygieneFollowsMachineFilter(t *testing.T) {
 			t.Errorf("hygiene line wider than 40: %q", l)
 		}
 	}
-	short := ansi.Strip(strings.SplitN(v.Render(a, 40, 12), "\n\n", 2)[0])
+	if !strings.Contains(head(200), "health") || strings.Count(strings.Split(head(200), "\n")[0], "╭") != 2 {
+		t.Errorf("wide: status and health cards should sit side by side: %q", head(200))
+	}
+	short := cardsOf(v.Render(a, 40, 12))
 	if n := strings.Count(short, "\n") + 1; n > 4 {
 		t.Errorf("header takes %d of 12 rows: %q", n, short)
 	}
