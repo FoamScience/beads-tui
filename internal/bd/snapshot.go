@@ -13,17 +13,32 @@ type Snapshot struct {
 	ByID     map[string]*Issue
 	Children map[string][]*Issue // parent id -> children, ordered by id
 	Loaded   time.Time
+	// Ephemeral indexes the wisp rows on their own, so no rule or view outside Workflows sees them.
+	Ephemeral *Snapshot
 }
 
 func NewSnapshot(issues []Issue) *Snapshot {
+	var kept, eph []*Issue
+	for i := range issues {
+		if issues[i].Ephemeral {
+			eph = append(eph, &issues[i])
+		} else {
+			kept = append(kept, &issues[i])
+		}
+	}
+	s := index(kept)
+	s.Ephemeral = index(eph)
+	return s
+}
+
+func index(issues []*Issue) *Snapshot {
 	s := &Snapshot{
+		Issues:   issues,
 		ByID:     make(map[string]*Issue, len(issues)),
 		Children: map[string][]*Issue{},
 		Loaded:   time.Now(),
 	}
-	for i := range issues {
-		is := &issues[i]
-		s.Issues = append(s.Issues, is)
+	for _, is := range issues {
 		s.ByID[is.ID] = is
 	}
 	for _, is := range s.Issues {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -17,8 +18,6 @@ import (
 type (
 	molDataMsg struct {
 		formulas []bd.FormulaSummary
-		wisps    []bd.Wisp
-		stale    []bd.StaleMolecule
 		err      error
 	}
 	formulaMsg struct {
@@ -47,58 +46,55 @@ type spawnSpec struct {
 }
 
 type molItem struct {
-	header  string
-	formula *bd.FormulaSummary
-	issue   *bd.Issue
-	wisp    *bd.Wisp
+	header      string
+	formula     *bd.FormulaSummary
+	issue       *bd.Issue
+	src         *bd.Snapshot // the snapshot holding issue: a.snap, or a.snap.Ephemeral for a wisp
+	done, total int
+	stale       bool
 }
 
-type moleculesView struct {
+type workflowsView struct {
 	items      []molItem
 	cursor     int
 	offset     int
 	formulas   []bd.FormulaSummary
-	wisps      []bd.Wisp
-	stale      map[string]bool
 	details    map[string]*bd.Formula
 	loading    bool
 	loaded     bool
 	showClosed bool
 	preview    *graphView
+
+	nMols, nWisps, nStale int
 }
 
-func newMolecules() *moleculesView {
-	return &moleculesView{stale: map[string]bool{}, details: map[string]*bd.Formula{}, preview: newGraph()}
+func newWorkflows() *workflowsView {
+	return &workflowsView{details: map[string]*bd.Formula{}, preview: newGraph()}
 }
 
-func (v *moleculesView) Name() string { return "Molecules" }
+func (v *workflowsView) Name() string { return "Workflows" }
 
-func (v *moleculesView) formulaDir(a *App) string { return filepath.Join(a.client.Dir, "formulas") }
+func (v *workflowsView) formulaDir(a *App) string { return filepath.Join(a.client.Dir, "formulas") }
 
-// Activate loads formulas and wisps the first time the tab opens.
-func (v *moleculesView) Activate(a *App) tea.Cmd {
+// Activate loads formulas the first time the tab opens; molecules and wisps come from the snapshot.
+func (v *workflowsView) Activate(a *App) tea.Cmd {
 	if v.loaded || v.loading {
 		return nil
 	}
 	return v.load(a)
 }
 
-func (v *moleculesView) load(a *App) tea.Cmd {
+func (v *workflowsView) load(a *App) tea.Cmd {
 	v.loading = true
 	c := a.client
 	return func() tea.Msg {
 		var m molDataMsg
 		m.formulas, m.err = c.Formulas()
-		if m.err != nil {
-			return m
-		}
-		m.wisps, _ = c.Wisps()
-		m.stale, _ = c.Stale()
 		return m
 	}
 }
 
-func (v *moleculesView) loadFormula(a *App, name string) tea.Cmd {
+func (v *workflowsView) loadFormula(a *App, name string) tea.Cmd {
 	if _, ok := v.details[name]; ok {
 		return nil
 	}
@@ -110,23 +106,28 @@ func (v *moleculesView) loadFormula(a *App, name string) tea.Cmd {
 	}
 }
 
-func (v *moleculesView) isMol(a *App, id string) bool {
+func (v *workflowsView) isMol(a *App, id string) bool {
 	return strings.HasPrefix(id, a.prefix+"mol-") || strings.HasPrefix(id, a.prefix+"wisp-")
 }
 
-// isMolRoot matches the root of a poured molecule or wisp; children share the id family.
-func (v *moleculesView) isMolRoot(a *App, is *bd.Issue) bool {
-	if is.IssueType == "molecule" {
-		return true
-	}
-	if !v.isMol(a, is.ID) {
+// isMolRoot matches the top of a poured molecule or wisp: molecule-typed or in the mol/wisp id
+// family, under no parent or one outside both. A step whose root was squashed or burned is no
+// root, nor is a sub-molecule nested in another.
+func (v *workflowsView) isMolRoot(a *App, is *bd.Issue) bool {
+	if is.IssueType != "molecule" && !v.isMol(a, is.ID) {
 		return false
 	}
+	if is.Parent == "" {
+		return true
+	}
 	p := a.snap.ByID[is.Parent]
-	return p == nil || !v.isMol(a, p.ID)
+	if p == nil {
+		p = a.snap.Ephemeral.ByID[is.Parent]
+	}
+	return p != nil && p.IssueType != "molecule" && !v.isMol(a, p.ID)
 }
 
-func (v *moleculesView) Rebuild(a *App) {
+func (v *workflowsView) Rebuild(a *App) {
 	var keep string
 	if it := v.current(); it != nil {
 		keep = v.itemKey(*it)
@@ -136,21 +137,20 @@ func (v *moleculesView) Rebuild(a *App) {
 	for i := range v.formulas {
 		v.items = append(v.items, molItem{formula: &v.formulas[i]})
 	}
-	var mols []*bd.Issue
-	for _, is := range a.snap.Issues {
-		if v.isMolRoot(a, is) && (v.showClosed || !is.Closed() || v.stale[is.ID]) {
-			mols = append(mols, is)
-		}
-	}
-	sort.Slice(mols, func(i, j int) bool { return mols[i].UpdatedAt.After(mols[j].UpdatedAt) })
+	mols, wisps := v.roots(a, a.snap), v.roots(a, a.snap.Ephemeral)
+	v.nMols, v.nWisps, v.nStale = len(mols), len(wisps), 0
 	v.items = append(v.items, molItem{header: "Molecules"})
 	for _, is := range mols {
-		v.items = append(v.items, molItem{issue: is})
+		it := rootItem(a.snap, is)
+		if it.stale = stale(a.snap, is); it.stale {
+			v.nStale++
+		}
+		v.items = append(v.items, it)
 	}
-	if len(v.wisps) > 0 {
+	if len(wisps) > 0 {
 		v.items = append(v.items, molItem{header: "Wisps"})
-		for i := range v.wisps {
-			v.items = append(v.items, molItem{wisp: &v.wisps[i]})
+		for _, is := range wisps {
+			v.items = append(v.items, rootItem(a.snap.Ephemeral, is))
 		}
 	}
 	v.cursor = 1
@@ -162,26 +162,49 @@ func (v *moleculesView) Rebuild(a *App) {
 	v.move(0)
 }
 
-func (v *moleculesView) itemKey(it molItem) string {
+// roots lists the molecule or wisp roots in src that pass the machine filter, newest first.
+func (v *workflowsView) roots(a *App, src *bd.Snapshot) []*bd.Issue {
+	var out []*bd.Issue
+	for _, is := range src.Issues {
+		if v.isMolRoot(a, is) && a.machineMatch(is) && (v.showClosed || !is.Closed()) {
+			out = append(out, is)
+		}
+	}
+	slices.SortFunc(out, func(x, y *bd.Issue) int { return y.UpdatedAt.Compare(x.UpdatedAt) })
+	return out
+}
+
+func rootItem(src *bd.Snapshot, is *bd.Issue) molItem {
+	it := molItem{issue: is, src: src}
+	it.done, it.total = src.Progress(is.ID)
+	return it
+}
+
+// stale matches bd mol stale: an open root whose direct children are all closed. Wisps never
+// call it, since all steps closed under an open root is how a wisp waits for its squash.
+func stale(s *bd.Snapshot, is *bd.Issue) bool {
+	kids := s.Children[is.ID]
+	return !is.Closed() && len(kids) > 0 && !slices.ContainsFunc(kids, func(c *bd.Issue) bool { return !c.Closed() })
+}
+
+func (v *workflowsView) itemKey(it molItem) string {
 	switch {
 	case it.formula != nil:
 		return "f:" + it.formula.Name
 	case it.issue != nil:
 		return "i:" + it.issue.ID
-	case it.wisp != nil:
-		return "w:" + it.wisp.ID
 	}
 	return ""
 }
 
-func (v *moleculesView) current() *molItem {
+func (v *workflowsView) current() *molItem {
 	if v.cursor < 0 || v.cursor >= len(v.items) || v.items[v.cursor].header != "" {
 		return nil
 	}
 	return &v.items[v.cursor]
 }
 
-func (v *moleculesView) move(d int) {
+func (v *workflowsView) move(d int) {
 	if len(v.items) == 0 {
 		return
 	}
@@ -200,36 +223,21 @@ func (v *moleculesView) move(d int) {
 	v.cursor = clamp(i, 0, len(v.items)-1)
 }
 
-func (v *moleculesView) Selected() *bd.Issue {
-	it := v.current()
-	if it == nil {
-		return nil
-	}
-	return v.itemIssue(it)
-}
-
-func (v *moleculesView) itemIssue(it *molItem) *bd.Issue {
-	switch {
-	case it.issue != nil:
+func (v *workflowsView) Selected() *bd.Issue {
+	if it := v.current(); it != nil {
 		return it.issue
-	case it.wisp != nil:
-		return &bd.Issue{ID: it.wisp.ID, Title: it.wisp.Title, Status: it.wisp.Status, IssueType: "epic"}
 	}
 	return nil
 }
 
-func (v *moleculesView) Msg(a *App, msg tea.Msg) tea.Cmd {
+func (v *workflowsView) Msg(a *App, msg tea.Msg) tea.Cmd {
 	switch m := msg.(type) {
 	case molDataMsg:
 		v.loading, v.loaded = false, true
 		if m.err != nil {
 			return flashErr(m.err)
 		}
-		v.formulas, v.wisps = m.formulas, m.wisps
-		v.stale = map[string]bool{}
-		for _, s := range m.stale {
-			v.stale[s.ID] = true
-		}
+		v.formulas = m.formulas
 		v.Rebuild(a)
 		return v.selectionCmd(a)
 	case formulaMsg:
@@ -258,7 +266,7 @@ func (v *moleculesView) Msg(a *App, msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-func (v *moleculesView) selectionCmd(a *App) tea.Cmd {
+func (v *workflowsView) selectionCmd(a *App) tea.Cmd {
 	if it := v.current(); it != nil && it.formula != nil {
 		return v.loadFormula(a, it.formula.Name)
 	}
@@ -266,7 +274,7 @@ func (v *moleculesView) selectionCmd(a *App) tea.Cmd {
 }
 
 // cook validates a formula after editing; bd reports the parse error with its location.
-func (v *moleculesView) cook(a *App, name string) tea.Cmd {
+func (v *workflowsView) cook(a *App, name string) tea.Cmd {
 	c := a.client
 	return func() tea.Msg {
 		if _, err := c.Output("cook", name); err != nil {
@@ -276,7 +284,7 @@ func (v *moleculesView) cook(a *App, name string) tea.Cmd {
 	}
 }
 
-func (v *moleculesView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
+func (v *workflowsView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 	it := v.current()
 	switch k.String() {
 	case "j", "down":
@@ -332,25 +340,19 @@ func (v *moleculesView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 		if it == nil || it.formula != nil {
 			return true, flash("select a molecule")
 		}
-		is := v.itemIssue(it)
+		is := it.issue
 		if k.String() == "Q" {
 			a.modal = newConfirm("Squash "+a.shortID(is.ID)+" into a digest?", func() tea.Cmd {
-				return v.after(a, a.write("squash "+a.shortID(is.ID), nil, "mol", "squash", is.ID))
+				return a.write("squash "+a.shortID(is.ID), nil, "mol", "squash", is.ID)
 			})
 		} else {
 			a.modal = newConfirm("Burn "+a.shortID(is.ID)+"? This deletes the molecule and cannot be undone.", func() tea.Cmd {
-				return v.after(a, a.write("burn "+a.shortID(is.ID), nil, "mol", "burn", is.ID, "--force"))
+				return a.write("burn "+a.shortID(is.ID), nil, "mol", "burn", is.ID, "--force")
 			})
 		}
 		return true, nil
 	}
 	return false, nil
-}
-
-// after chains a molecule-list reload behind a write.
-func (v *moleculesView) after(a *App, cmd tea.Cmd) tea.Cmd {
-	v.loaded = false
-	return tea.Sequence(cmd, v.load(a))
 }
 
 var formulaName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -383,7 +385,7 @@ priority = 2
 needs = ["start"]
 `
 
-func (v *moleculesView) newFormula(a *App, name string) tea.Cmd {
+func (v *workflowsView) newFormula(a *App, name string) tea.Cmd {
 	if !formulaName.MatchString(name) {
 		return flashErr(fmt.Errorf("formula name %q: use lowercase letters, digits and dashes", name))
 	}
@@ -404,7 +406,7 @@ func editFile(path, name string) tea.Cmd {
 	return tea.ExecProcess(editorCmd(path), func(err error) tea.Msg { return editDoneMsg{name, err} })
 }
 
-func (v *moleculesView) distillModal(a *App) *modal {
+func (v *workflowsView) distillModal(a *App) *modal {
 	var opts []option
 	for _, is := range a.snap.Issues {
 		if is.IssueType == "epic" && !v.isMol(a, is.ID) {
@@ -443,7 +445,7 @@ func slug(s string) string {
 }
 
 // askVars prompts for each declared variable in name order, then requests a dry run.
-func (v *moleculesView) askVars(a *App, spec spawnSpec, f *bd.Formula) tea.Cmd {
+func (v *workflowsView) askVars(a *App, spec spawnSpec, f *bd.Formula) tea.Cmd {
 	names := make([]string, 0, len(f.Vars))
 	for n := range f.Vars {
 		names = append(names, n)
@@ -479,7 +481,7 @@ func (v *moleculesView) askVars(a *App, spec spawnSpec, f *bd.Formula) tea.Cmd {
 }
 
 // confirmSpawn shows the dry run, then asks where the new root goes so it never lands as a stray.
-func (v *moleculesView) confirmSpawn(a *App, spec spawnSpec, preview string) {
+func (v *workflowsView) confirmSpawn(a *App, spec spawnSpec, preview string) {
 	verb := "Pour"
 	if spec.wisp {
 		verb = "Wisp"
@@ -514,7 +516,7 @@ func (v *moleculesView) confirmSpawn(a *App, spec spawnSpec, preview string) {
 							spec.labels = append(spec.labels, l)
 						}
 					}
-					return v.after(a, v.spawn(a, spec))
+					return v.spawn(a, spec)
 				})
 				return nil
 			})
@@ -524,7 +526,7 @@ func (v *moleculesView) confirmSpawn(a *App, spec spawnSpec, preview string) {
 	})
 }
 
-func (v *moleculesView) spawn(a *App, spec spawnSpec) tea.Cmd {
+func (v *workflowsView) spawn(a *App, spec spawnSpec) tea.Cmd {
 	a.pending++
 	c := a.client
 	desc := "poured " + spec.formula
@@ -555,24 +557,31 @@ func (v *moleculesView) spawn(a *App, spec spawnSpec) tea.Cmd {
 	}
 }
 
-func (v *moleculesView) Hints() []string {
-	return []string{"p pour", "w wisp", "n new", "E edit", "d distill", "Q squash", "B burn", "h/l J/K steps", "H closed"}
+func (v *workflowsView) Hints() []string {
+	return []string{"p pour", "w wisp", "n new", "E edit", "d distill", "Q squash", "B burn", "h/l J/K steps", "H closed", "M machine"}
 }
 
-func (v *moleculesView) Render(a *App, w, h int) string {
+func (v *workflowsView) Render(a *App, w, h int) string {
 	if !v.loaded {
-		return sDim.Render("\n  loading formulas…")
+		return strings.Join(header(a, w), "\n") + "\n" + sDim.Render("  loading formulas…")
 	}
+	chips := []string{sDim.Render(fmt.Sprintf("%d formulas · %d molecules · %d wisps", len(v.formulas), v.nMols, v.nWisps))}
+	if v.nStale > 0 {
+		chips = append(chips, sWarn.Render(fmt.Sprintf("%d stale", v.nStale)))
+	}
+	top := header(a, w, chips...)
+	bar := strings.Join(top, "\n")
+	h -= len(top)
 	lw := min(max(w/4, 28), 40)
 	left := v.renderList(a, lw, h)
 	right := v.renderPreview(a, w-lw-3, h)
 	sep := strings.TrimRight(strings.Repeat(sRule.Render("│")+"\n", h), "\n")
-	return lipgloss.JoinHorizontal(lipgloss.Top,
+	return bar + "\n" + lipgloss.JoinHorizontal(lipgloss.Top,
 		lipgloss.NewStyle().Width(lw).Height(h).MaxHeight(h).Render(left), " ", sep, " ",
 		lipgloss.NewStyle().Height(h).MaxHeight(h).Render(right))
 }
 
-func (v *moleculesView) renderList(a *App, w, h int) string {
+func (v *workflowsView) renderList(a *App, w, h int) string {
 	if v.cursor < v.offset {
 		v.offset = v.cursor
 	}
@@ -600,22 +609,15 @@ func (v *moleculesView) renderList(a *App, w, h int) string {
 			line = marker + name + sDim.Render(fmt.Sprintf("  %d steps · %d vars", f.Steps, f.Vars))
 		case it.issue != nil:
 			is := it.issue
-			done, total := a.snap.Progress(is.ID)
 			title := is.Title
 			if sel {
 				title = sSel.Render(title)
 			}
-			tag := sDim.Render(fmt.Sprintf(" %d/%d", done, total))
-			if v.stale[is.ID] {
+			tag := sDim.Render(fmt.Sprintf(" %d/%d", it.done, it.total))
+			if it.stale {
 				tag += sWarn.Render(" stale")
 			}
-			line = marker + glyph(a.snap, is) + " " + title + tag
-		case it.wisp != nil:
-			title := it.wisp.Title
-			if sel {
-				title = sSel.Render(title)
-			}
-			line = marker + sDim.Render("~ ") + title
+			line = marker + glyph(it.src, is) + " " + title + tag
 		}
 		lines = append(lines, ansi.Truncate(line, w, "…"))
 	}
@@ -625,7 +627,7 @@ func (v *moleculesView) renderList(a *App, w, h int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (v *moleculesView) renderPreview(a *App, w, h int) string {
+func (v *workflowsView) renderPreview(a *App, w, h int) string {
 	it := v.current()
 	if it == nil {
 		return ""
@@ -633,20 +635,19 @@ func (v *moleculesView) renderPreview(a *App, w, h int) string {
 	if it.formula != nil {
 		return v.formulaPreview(a, it.formula, w, h)
 	}
-	is := v.itemIssue(it)
-	if a.snap.ByID[is.ID] == nil {
-		return sDim.Render("\n  " + is.ID + " is not in the local snapshot")
-	}
 	g := v.preview
-	if g.fixed != nil || g.rootID != is.ID {
-		g.fixed, g.showClosed = nil, true
-		g.rootID, g.sel, g.offX, g.offY = is.ID, "", 0, 0
+	if g.rootID != it.issue.ID {
+		g.rootID, g.sel, g.offX, g.offY = it.issue.ID, "", 0, 0
+	}
+	g.fixed, g.showClosed = nil, true
+	if it.issue.Ephemeral {
+		g.fixed = it.src
 	}
 	g.Rebuild(a)
 	return g.Render(a, w, h)
 }
 
-func (v *moleculesView) formulaPreview(a *App, s *bd.FormulaSummary, w, h int) string {
+func (v *workflowsView) formulaPreview(a *App, s *bd.FormulaSummary, w, h int) string {
 	f := v.details[s.Name]
 	var b strings.Builder
 	b.WriteString(sBold.Render(s.Name) + sDim.Render("  "+s.Type))

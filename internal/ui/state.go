@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/FoamScience/beads-tui/internal/bd"
@@ -77,7 +78,7 @@ func saveCache(beadsDir string, is []bd.Issue) {
 	if p == "" || os.MkdirAll(filepath.Dir(p), 0o755) != nil {
 		return
 	}
-	b, err := json.Marshal(is)
+	b, err := json.Marshal(slices.DeleteFunc(slices.Clone(is), func(i bd.Issue) bool { return i.Ephemeral }))
 	if err != nil {
 		return
 	}
