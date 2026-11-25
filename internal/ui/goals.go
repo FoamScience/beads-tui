@@ -328,20 +328,21 @@ func (v *goalsView) Render(a *App, w, h int) string {
 	tp := c.TimePct(now)
 	score := a.goals.CycleScore(a.snap, c)
 	elapsed, days := c.Days(now)
-	head := fmt.Sprintf(" %s   %s %s %s   %s %s %s   %s %s %s",
-		machineChip(a), sBold.Render(c.ID), sDim.Render(c.Start.Format("02 Jan")+" → "+c.End.Format("02 Jan 2006")), sDim.Render(fmt.Sprintf("day %d/%d", elapsed, days)),
-		sDim.Render("time"), progressBar(int(tp), 100, 10), sDim.Render(fmt.Sprintf("%.0f%%", tp)),
-		sDim.Render("earned"), goalBar(score, 0, 10), fmt.Sprintf("%.0f%%", score))
+	cycle := fmt.Sprintf("%s %s %s", sBold.Render(c.ID), sDim.Render(c.Start.Format("02 Jan")+" → "+c.End.Format("02 Jan 2006")), sDim.Render(fmt.Sprintf("day %d/%d", elapsed, days)))
 	if c.Past(now) {
-		head += "  " + sDim.Render("ended")
+		cycle += "  " + sDim.Render("ended")
 	}
-	out := ansi.Truncate(head, w, "…")
+	chips := []string{
+		cycle,
+		fmt.Sprintf("%s %s %s", sDim.Render("time"), progressBar(int(tp), 100, 10), sDim.Render(fmt.Sprintf("%.0f%%", tp))),
+		fmt.Sprintf("%s %s %.0f%%", sDim.Render("earned"), goalBar(score, 0, 10), score),
+	}
 	if len(a.goals.Warning) > 0 {
-		out += "\n " + sWarn.Render(ansi.Truncate("⚠ "+strings.Join(a.goals.Warning, "; "), w-2, "…"))
-	} else {
-		out += "\n"
+		chips = append(chips, sWarn.Render("⚠ "+strings.Join(a.goals.Warning, "; ")))
 	}
-	h -= 2
+	top := cards(w, 4, card{machineChip(a), chips})
+	out := strings.Join(top, "\n")
+	h -= len(top)
 	lw := clamp(w*2/5, 30, 48)
 	rw := w - lw - 3
 	left := v.renderGoals(a, c, lw, h, tp)

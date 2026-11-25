@@ -208,10 +208,11 @@ func (v *memoriesView) Render(a *App, w, h int) string {
 	if f == "" {
 		f = sDim.Render("none")
 	}
-	bar := ansi.Truncate(fmt.Sprintf(" %s   %s %s   %s", machineChip(a), sDim.Render("filter"), f, sDim.Render(fmt.Sprintf("%d of %d memories", len(v.keys), len(v.mems)))), w, "…")
-	h -= 2
+	top := header(a, w, sDim.Render("filter ")+f, sDim.Render(fmt.Sprintf("%d of %d memories", len(v.keys), len(v.mems))))
+	bar := strings.Join(top, "\n")
+	h -= len(top)
 	if len(v.keys) == 0 {
-		return bar + "\n\n" + sDim.Render("  no memories, a remembers one")
+		return bar + "\n" + sDim.Render("  no memories, a remembers one")
 	}
 	lw := min(max(w/3, 28), 50)
 	right := ansi.Wrap(v.mems[v.current()], max(w-lw-3, 10), " ")
@@ -219,7 +220,7 @@ func (v *memoriesView) Render(a *App, w, h int) string {
 		right = ansi.Truncate(chips, max(w-lw-3, 10), "…") + "\n\n" + right
 	}
 	sep := strings.TrimRight(strings.Repeat(sRule.Render("│")+"\n", h), "\n")
-	return bar + "\n\n" + lipgloss.JoinHorizontal(lipgloss.Top,
+	return bar + "\n" + lipgloss.JoinHorizontal(lipgloss.Top,
 		lipgloss.NewStyle().Width(lw).Height(h).MaxHeight(h).Render(v.renderList(lw, h)), " ", sep, " ",
 		lipgloss.NewStyle().Height(h).MaxHeight(h).Render(right))
 }
