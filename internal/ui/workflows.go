@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -39,7 +41,24 @@ type (
 		ids  []string
 		err  error
 	}
+	bondFormulaMsg struct {
+		b   bondSpec
+		f   bd.Formula
+		err error
+	}
+	bondDryRunMsg struct {
+		b   bondSpec
+		out string
+		err error
+	}
 )
+
+// bondSpec is a bd mol bond onto a molecule: other is a formula name or another molecule's id.
+type bondSpec struct {
+	mol, other, typ string
+	formula         bool
+	vars            map[string]string
+}
 
 type spawnSpec struct {
 	formula string
@@ -51,12 +70,133 @@ type spawnSpec struct {
 }
 
 type molItem struct {
-	header      string
-	formula     *bd.FormulaSummary
-	issue       *bd.Issue
-	src         *bd.Snapshot // the snapshot holding issue: a.snap, a.snap.Ephemeral or a.snap.Gates
+	header  string
+	formula *bd.FormulaSummary
+	issue   *bd.Issue
+	src     *bd.Snapshot // the snapshot holding issue: a.snap, a.snap.Ephemeral or a.snap.Gates
+	st      molStatus
+	stale   bool
+}
+
+// molStatus holds what bd mol progress, current, last-activity and ready --gated report, read
+// from the snapshot rather than bd, whose reads would take the Dolt lock. bd counts direct children
+// as steps; here a step is a leaf work item at any depth (a parallel-bonded sub-molecule is a
+// container, not a step), a gate is a wait condition rather than a step, and the last activity
+// spans every descendant.
+type molStatus struct {
 	done, total int
-	stale       bool
+	current     []*bd.Issue // in progress or hooked
+	ready       []*bd.Issue
+	waiting     []*bd.Issue // open gates under the root
+	resume      []*bd.Issue // ready steps whose gate closed: bd mol ready --gated
+	last        time.Time
+	lastStep    *bd.Issue // nil when the root itself moved last
+}
+
+func statusOf(s *bd.Snapshot, root *bd.Issue) molStatus {
+	st := molStatus{last: root.UpdatedAt}
+	hooked := root.Status == "hooked"
+	var walk func(id string)
+	walk = func(id string) {
+		for _, c := range s.Children[id] {
+			hooked = hooked || c.Status == "hooked"
+			if c.UpdatedAt.After(st.last) {
+				st.last, st.lastStep = c.UpdatedAt, c
+			}
+			switch {
+			case c.IssueType == "gate":
+				if !c.Closed() {
+					st.waiting = append(st.waiting, c)
+				}
+			case len(s.Children[c.ID]) > 0:
+			default:
+				st.total++
+				switch {
+				case c.Closed():
+					st.done++
+				case c.Status == "in_progress" || c.Status == "hooked":
+					st.current = append(st.current, c)
+				case s.Ready(c):
+					st.ready = append(st.ready, c)
+				}
+			}
+			walk(c.ID)
+		}
+	}
+	walk(root.ID)
+	if !hooked {
+		for _, c := range st.ready {
+			if slices.ContainsFunc(c.Dependencies, func(d bd.Dependency) bool {
+				g := s.Find(d.DependsOnID)
+				return bd.Blocking(d.Type) && g != nil && g.IssueType == "gate" && g.Closed()
+			}) {
+				st.resume = append(st.resume, c)
+			}
+		}
+	}
+	return st
+}
+
+const minGraphRows = 6
+
+// previewPane puts a molecule's or wisp's status lines under its step graph's title. The graph
+// keeps at least minGraphRows rows; status lines give way from the bottom on short terminals.
+func (v *workflowsView) previewPane(a *App, w, h int) string {
+	it := v.current()
+	if it == nil || it.issue == nil || isGate(it) {
+		return v.renderPreview(a, w, h)
+	}
+	lines := molStatusLines(a, it, w)
+	lines = lines[:min(len(lines), max(h-minGraphRows, 1))]
+	head, rest, _ := strings.Cut(v.renderPreview(a, w, max(h-len(lines), 1)), "\n")
+	return head + "\n" + strings.Join(lines, "\n") + "\n" + rest
+}
+
+// molStatusLines lists progress, the current or next steps, open gates, gate-resume candidates
+// and the last activity.
+func molStatusLines(a *App, it *molItem, w int) []string {
+	st, s := it.st, it.src
+	var lines []string
+	kv := func(k, val string) {
+		lines = append(lines, ansi.Truncate(" "+sKey.Render(padRight(k, 9))+val, w, "…"))
+	}
+	pct := 0
+	if st.total > 0 {
+		pct = st.done * 100 / st.total
+	}
+	kv("progress", fmt.Sprintf("%d/%d steps · %d%%", st.done, st.total, pct))
+	steps := func(k string, xs []*bd.Issue, label func(*bd.Issue) string) {
+		for i, x := range xs {
+			if i == 2 {
+				kv("", sDim.Render(fmt.Sprintf("… %d more", len(xs)-2)))
+				break
+			}
+			kv(k, glyph(s, x)+" "+a.shortID(x.ID)+"  "+label(x))
+			k = ""
+		}
+	}
+	title := func(x *bd.Issue) string { return x.Title }
+	steps("current", st.current, title)
+	if len(st.current) == 0 {
+		steps("next", st.ready, title)
+	}
+	steps("waiting", st.waiting, func(g *bd.Issue) string {
+		var ws []string
+		for _, x := range waiters(s, g) {
+			ws = append(ws, a.shortID(x.ID))
+		}
+		return "on " + g.AwaitType + " gate" + sDim.Render(", holds "+strings.Join(ws, " "))
+	})
+	steps("resume", st.resume, title)
+	when := age(st.last)
+	if when != "now" {
+		when += " ago"
+	}
+	if st.lastStep != nil {
+		when += sDim.Render("  " + a.shortID(st.lastStep.ID) + "  " + st.lastStep.Title)
+	}
+	kv("activity", when)
+	return lines
 }
 
 type workflowsView struct {
@@ -70,7 +210,7 @@ type workflowsView struct {
 	showClosed bool
 	preview    *graphView
 
-	nMols, nWisps, nStale, nGates int
+	nMols, nWisps, nStale, nGates, nResume int
 }
 
 func newWorkflows() *workflowsView {
@@ -140,7 +280,7 @@ func (v *workflowsView) Rebuild(a *App) {
 		v.items = append(v.items, molItem{formula: &v.formulas[i]})
 	}
 	mols, wisps := v.roots(a, a.snap), v.roots(a, a.snap.Ephemeral)
-	v.nMols, v.nWisps, v.nStale = len(mols), len(wisps), 0
+	v.nMols, v.nWisps, v.nStale, v.nResume = len(mols), len(wisps), 0, 0
 	v.items = append(v.items, molItem{header: "Molecules"})
 	for _, is := range mols {
 		it := rootItem(a.snap, is)
@@ -153,6 +293,11 @@ func (v *workflowsView) Rebuild(a *App) {
 		v.items = append(v.items, molItem{header: "Wisps"})
 		for _, is := range wisps {
 			v.items = append(v.items, rootItem(a.snap.Ephemeral, is))
+		}
+	}
+	for _, it := range v.items {
+		if len(it.st.resume) > 0 {
+			v.nResume++
 		}
 	}
 	gates := v.gates(a)
@@ -217,9 +362,7 @@ func waiters(s *bd.Snapshot, gate *bd.Issue) []*bd.Issue {
 func isGate(it *molItem) bool { return it != nil && it.issue != nil && it.issue.IssueType == "gate" }
 
 func rootItem(src *bd.Snapshot, is *bd.Issue) molItem {
-	it := molItem{issue: is, src: src}
-	it.done, it.total = src.Progress(is.ID)
-	return it
+	return molItem{issue: is, src: src, st: statusOf(src, is)}
 }
 
 // stale matches bd mol stale: an open root whose direct children are all closed. Wisps never
@@ -306,6 +449,18 @@ func (v *workflowsView) Msg(a *App, msg tea.Msg) tea.Cmd {
 		return nil
 	case wispGCMsg:
 		return confirmGC(a, m)
+	case bondFormulaMsg:
+		if m.err != nil {
+			return flashErr(m.err)
+		}
+		v.details[m.b.other] = &m.f
+		return v.promptVars(a, &m.f, m.b.vars, func() tea.Cmd { return dryRunBond(a, m.b) })
+	case bondDryRunMsg:
+		if m.err != nil {
+			return flashErr(m.err)
+		}
+		confirmBond(a, m.b, m.out)
+		return nil
 	}
 	return nil
 }
@@ -451,6 +606,12 @@ func (v *workflowsView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 			}
 		})
 		return true, nil
+	case "+":
+		if it == nil || it.formula != nil || isGate(it) || it.issue.Closed() {
+			return true, flash("select an open molecule to bond onto")
+		}
+		a.modal = v.bondModal(a, it.issue)
+		return true, nil
 	}
 	return false, nil
 }
@@ -482,6 +643,120 @@ func confirmGC(a *App, m wispGCMsg) tea.Cmd {
 		return a.write(fmt.Sprintf("wisp gc: %d rows", len(m.ids)), nil, append([]string{"delete", "--force"}, m.ids...)...)
 	})
 	return nil
+}
+
+var bondTypes = []string{"sequential", "parallel", "conditional"}
+
+// bondModal picks what to bond onto mol (a formula, or another open molecule of the same phase to
+// join), then the bond type. A formula's variables are asked for before the dry run. bd joins a
+// wisp and a persistent molecule without re-phasing either, so a persistent row could end up with
+// a synced blocks edge on a wisp no other machine has; the picker offers same-phase joins only.
+func (v *workflowsView) bondModal(a *App, mol *bd.Issue) *modal {
+	var opts []option
+	for _, f := range v.formulas {
+		opts = append(opts, option{"f:" + f.Name, "formula   " + f.Name + sDim.Render(fmt.Sprintf("  %d steps · %d vars", f.Steps, f.Vars))})
+	}
+	for _, it := range v.items {
+		if is := it.issue; is != nil && !isGate(&it) && !is.Closed() && is.ID != mol.ID && is.Ephemeral == mol.Ephemeral {
+			opts = append(opts, option{"m:" + is.ID, "molecule  " + a.shortID(is.ID) + "  " + is.Title})
+		}
+	}
+	return newPicker("Bond onto "+a.shortID(mol.ID)+": a formula, or a molecule to join", opts, func(pick string) tea.Cmd {
+		kind, other, ok := strings.Cut(pick, ":")
+		if !ok {
+			return nil
+		}
+		b := bondSpec{mol: mol.ID, other: other, formula: kind == "f", vars: map[string]string{}}
+		what := other
+		if !b.formula {
+			what = a.shortID(other)
+		}
+		short := a.shortID(mol.ID)
+		a.modal = newPicker("Bond "+what+" onto "+short+" as", []option{
+			{"sequential", "sequential: runs after " + short + " completes"},
+			{"parallel", "parallel: runs alongside " + short + ", attached under it"},
+			{"conditional", "conditional: runs only if " + short + " fails"},
+		}, func(typ string) tea.Cmd {
+			if !slices.Contains(bondTypes, typ) {
+				return nil
+			}
+			b.typ = typ
+			if !b.formula {
+				return dryRunBond(a, b)
+			}
+			if f := v.details[other]; f != nil {
+				return v.promptVars(a, f, b.vars, func() tea.Cmd { return dryRunBond(a, b) })
+			}
+			c := a.client
+			return func() tea.Msg {
+				f, err := c.Formula(other)
+				return bondFormulaMsg{b, f, err}
+			}
+		})
+		return nil
+	})
+}
+
+func (b bondSpec) args() []string {
+	args := []string{"mol", "bond", b.mol, b.other, "--type", b.typ}
+	names := make([]string, 0, len(b.vars))
+	for n := range b.vars {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		args = append(args, "--var", n+"="+b.vars[n])
+	}
+	return args
+}
+
+func dryRunBond(a *App, b bondSpec) tea.Cmd {
+	c := a.client
+	return func() tea.Msg {
+		out, err := c.Output(append(b.args(), "--dry-run")...)
+		return bondDryRunMsg{b, string(out), err}
+	}
+}
+
+func confirmBond(a *App, b bondSpec, preview string) {
+	var lines []string
+	for _, l := range strings.Split(strings.TrimSpace(preview), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	a.modal = newConfirm("Bond onto "+a.shortID(b.mol)+"?\n\n"+strings.Join(lines, "\n"), func() tea.Cmd {
+		return bond(a, b)
+	})
+}
+
+// bond runs bd mol bond. A formula bonded sequential or conditional spawns its own root, which bd
+// leaves without labels and mol bond takes none, so it gets this host's machine label as a pour
+// does; a parallel bond attaches under mol and a join spawns nothing.
+func bond(a *App, b bondSpec) tea.Cmd {
+	a.pending++
+	c, host := a.client, a.host
+	desc := "bonded " + b.other + " onto " + a.shortID(b.mol)
+	return func() tea.Msg {
+		out, err := c.Output(append(b.args(), "--json")...)
+		if err != nil || !b.formula || b.typ == "parallel" {
+			return writeDoneMsg{desc, err}
+		}
+		var r struct {
+			IDMapping map[string]string `json:"id_mapping"`
+		}
+		if err := json.Unmarshal(out, &r); err != nil {
+			return writeDoneMsg{desc + ", but reading the new root id failed", err}
+		}
+		id := r.IDMapping[b.other]
+		if id == "" {
+			return writeDoneMsg{desc, fmt.Errorf("bd mol bond named no root for %s, so it has no machine label", b.other)}
+		}
+		if err := c.Exec("update", id, "--add-label", "machine:"+host); err != nil {
+			return writeDoneMsg{desc + " as " + id + ", but labelling it failed", err}
+		}
+		return writeDoneMsg{desc + " as " + id, nil}
+	}
 }
 
 var formulaName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -575,6 +850,17 @@ func slug(s string) string {
 
 // askVars prompts for each declared variable in name order, then requests a dry run.
 func (v *workflowsView) askVars(a *App, spec spawnSpec, f *bd.Formula) tea.Cmd {
+	c := a.client
+	return v.promptVars(a, f, spec.vars, func() tea.Cmd {
+		return func() tea.Msg {
+			out, err := c.DryRun(spec.formula, spec.wisp, spec.vars)
+			return dryRunMsg{spec, out, err}
+		}
+	})
+}
+
+// promptVars asks for each declared variable in name order into vars, then runs done.
+func (v *workflowsView) promptVars(a *App, f *bd.Formula, vars map[string]string, done func() tea.Cmd) tea.Cmd {
 	names := make([]string, 0, len(f.Vars))
 	for n := range f.Vars {
 		names = append(names, n)
@@ -583,11 +869,7 @@ func (v *workflowsView) askVars(a *App, spec spawnSpec, f *bd.Formula) tea.Cmd {
 	var ask func(i int) tea.Cmd
 	ask = func(i int) tea.Cmd {
 		if i == len(names) {
-			c := a.client
-			return func() tea.Msg {
-				out, err := c.DryRun(spec.formula, spec.wisp, spec.vars)
-				return dryRunMsg{spec, out, err}
-			}
+			return done()
 		}
 		n := names[i]
 		fv := f.Vars[n]
@@ -600,7 +882,7 @@ func (v *workflowsView) askVars(a *App, spec spawnSpec, f *bd.Formula) tea.Cmd {
 				return flashErr(fmt.Errorf("%s is required", n))
 			}
 			if val != "" {
-				spec.vars[n] = val
+				vars[n] = val
 			}
 			return ask(i + 1)
 		})
@@ -687,7 +969,7 @@ func (v *workflowsView) spawn(a *App, spec spawnSpec) tea.Cmd {
 }
 
 func (v *workflowsView) Hints() []string {
-	return []string{"p pour", "w wisp", "n new", "E edit", "d distill", "Q squash", "B burn", "X wisp gc", "G resolve gate", "T check gates", "h/l J/K steps", "H closed", "M machine"}
+	return []string{"p pour", "w wisp", "+ bond", "n new", "E edit", "d distill", "Q squash", "B burn", "X wisp gc", "G resolve gate", "T check gates", "h/l J/K steps", "H closed", "M machine"}
 }
 
 func (v *workflowsView) Render(a *App, w, h int) string {
@@ -708,12 +990,15 @@ func (v *workflowsView) Render(a *App, w, h int) string {
 	if v.nGates > 0 {
 		chips = append(chips, sDim.Render(fmt.Sprintf("%d gates", v.nGates)))
 	}
+	if v.nResume > 0 {
+		chips = append(chips, sAccent.Render(fmt.Sprintf("%d to resume", v.nResume)))
+	}
 	top := header(a, w, chips...)
 	bar := strings.Join(top, "\n")
 	h -= len(top)
 	lw := min(max(w/4, 28), 40)
 	left := v.renderList(a, lw, h)
-	right := v.renderPreview(a, w-lw-3, h)
+	right := v.previewPane(a, w-lw-3, h)
 	sep := strings.TrimRight(strings.Repeat(sRule.Render("│")+"\n", h), "\n")
 	return bar + "\n" + lipgloss.JoinHorizontal(lipgloss.Top,
 		lipgloss.NewStyle().Width(lw).Height(h).MaxHeight(h).Render(left), " ", sep, " ",
@@ -752,12 +1037,15 @@ func (v *workflowsView) renderList(a *App, w, h int) string {
 			if sel {
 				title = sSel.Render(title)
 			}
-			tag := sDim.Render(fmt.Sprintf(" %d/%d", it.done, it.total))
+			tag := sDim.Render(fmt.Sprintf(" %d/%d", it.st.done, it.st.total))
 			if isGate(&it) {
 				tag = sDim.Render(" " + is.AwaitType)
 			}
 			if it.stale {
 				tag += sWarn.Render(" stale")
+			}
+			if len(it.st.resume) > 0 {
+				tag += sAccent.Render(" resume")
 			}
 			line = marker + glyph(it.src, is) + " " + title + tag
 		}
