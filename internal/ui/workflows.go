@@ -438,9 +438,9 @@ func (v *workflowsView) Msg(a *App, msg tea.Msg) tea.Cmd {
 		if m.err != nil {
 			return flashErr(m.err)
 		}
-		delete(v.details, m.name)
-		v.loaded = false
-		return tea.Batch(v.load(a), v.cook(a, m.name))
+		return tea.Batch(v.reloadFormulas(a, m.name), v.cook(a, m.name))
+	case convertedMsg:
+		return v.converted(a, m)
 	case dryRunMsg:
 		if m.err != nil {
 			return flashErr(m.err)
@@ -511,8 +511,8 @@ func (v *workflowsView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 		v.Rebuild(a)
 		return true, nil
 	case "r":
-		v.loaded, v.details = false, map[string]*bd.Formula{}
-		return true, tea.Batch(v.load(a), a.load())
+		v.details = map[string]*bd.Formula{}
+		return true, tea.Batch(v.reloadFormulas(a), a.load())
 	case "n":
 		a.modal = newPrompt("New formula name (lowercase, dashes)", "", func(name string) tea.Cmd {
 			return v.newFormula(a, name)
@@ -523,6 +523,16 @@ func (v *workflowsView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 			return true, editFile(it.formula.Source, it.formula.Name)
 		}
 		return true, flash("select a formula to edit")
+	case "t":
+		if it == nil || it.formula == nil {
+			return true, flash("select a formula to convert")
+		}
+		return true, v.convertModal(a, it.formula)
+	case "V":
+		if it == nil || it.formula == nil {
+			return true, flash("select a formula to seed-check")
+		}
+		return true, v.seed(a, it.formula.Name)
 	case "d":
 		a.modal = v.distillModal(a)
 		return true, nil
@@ -969,7 +979,7 @@ func (v *workflowsView) spawn(a *App, spec spawnSpec) tea.Cmd {
 }
 
 func (v *workflowsView) Hints() []string {
-	return []string{"p pour", "w wisp", "+ bond", "n new", "E edit", "d distill", "Q squash", "B burn", "X wisp gc", "G resolve gate", "T check gates", "h/l J/K steps", "H closed", "M machine"}
+	return []string{"p pour", "w wisp", "+ bond", "n new", "E edit", "t to TOML", "V seed check", "d distill", "Q squash", "B burn", "X wisp gc", "G resolve gate", "T check gates", "h/l J/K steps", "H closed", "M machine"}
 }
 
 func (v *workflowsView) Render(a *App, w, h int) string {
@@ -1137,7 +1147,7 @@ func (v *workflowsView) formulaPreview(a *App, s *bd.FormulaSummary, w, h int) s
 	if f != nil && f.Phase != "" {
 		b.WriteString(sDim.Render(" · " + f.Phase))
 	}
-	b.WriteString("\n" + sDim.Render(strings.Replace(s.Source, os.Getenv("HOME"), "~", 1)) + "\n")
+	b.WriteString("\n" + sDim.Render(shortHome(s.Source)) + "\n")
 	if f == nil {
 		return b.String() + sDim.Render("\nloading…")
 	}
