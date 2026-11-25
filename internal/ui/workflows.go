@@ -208,6 +208,8 @@ type workflowsView struct {
 	loading    bool
 	loaded     bool
 	showClosed bool
+	varsOpen   bool // the formula preview shows its full var table instead of the step graph
+	varsOff    int
 	preview    *graphView
 
 	nMols, nWisps, nStale, nGates, nResume int
@@ -466,6 +468,7 @@ func (v *workflowsView) Msg(a *App, msg tea.Msg) tea.Cmd {
 }
 
 func (v *workflowsView) selectionCmd(a *App) tea.Cmd {
+	v.varsOff = 0
 	if it := v.current(); it != nil && it.formula != nil {
 		return v.loadFormula(a, it.formula.Name)
 	}
@@ -499,9 +502,22 @@ func (v *workflowsView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 		v.move(-5)
 		return true, v.selectionCmd(a)
 	case "h", "l", "left", "right":
+		if v.varsOpen && it != nil && it.formula != nil {
+			return true, nil
+		}
 		_, cmd := v.preview.Update(a, k)
 		return true, cmd
+	case "v":
+		if it == nil || it.formula == nil {
+			return true, flash("select a formula to see its vars")
+		}
+		v.varsOpen, v.varsOff = !v.varsOpen, 0
+		return true, nil
 	case "J", "K":
+		if v.varsOpen && it != nil && it.formula != nil {
+			v.varsOff = max(v.varsOff+map[string]int{"J": 1, "K": -1}[k.String()], 0)
+			return true, nil
+		}
 		// j/k move the list, so shifted keys walk the step graph vertically
 		key := map[string]string{"J": "j", "K": "k"}[k.String()]
 		_, cmd := v.preview.Update(a, tea.KeyPressMsg{Code: rune(key[0]), Text: key})
@@ -979,7 +995,7 @@ func (v *workflowsView) spawn(a *App, spec spawnSpec) tea.Cmd {
 }
 
 func (v *workflowsView) Hints() []string {
-	return []string{"p pour", "w wisp", "+ bond", "n new", "E edit", "t to TOML", "V seed check", "d distill", "Q squash", "B burn", "X wisp gc", "G resolve gate", "T check gates", "h/l J/K steps", "H closed", "M machine"}
+	return []string{"p pour", "w wisp", "+ bond", "n new", "E edit", "t to TOML", "V seed check", "d distill", "Q squash", "B burn", "X wisp gc", "G resolve gate", "T check gates", "h/l J/K steps", "v vars", "H closed", "M machine"}
 }
 
 func (v *workflowsView) Render(a *App, w, h int) string {
@@ -1151,28 +1167,26 @@ func (v *workflowsView) formulaPreview(a *App, s *bd.FormulaSummary, w, h int) s
 	if f == nil {
 		return b.String() + sDim.Render("\nloading…")
 	}
-	desc := strings.Split(strings.TrimSpace(f.Description), "\n")
+	desc := strings.Split(ansi.Wordwrap(strings.TrimSpace(f.Description), w, " "), "\n")
 	if len(desc) > 4 {
 		desc = append(desc[:4], "…")
 	}
-	b.WriteString("\n" + ansi.Wordwrap(strings.Join(desc, "\n"), w, " ") + "\n")
-	if len(f.Vars) > 0 {
-		b.WriteString("\n" + sSection.Render("Vars") + "\n")
-		names := make([]string, 0, len(f.Vars))
-		for n := range f.Vars {
-			names = append(names, n)
-		}
-		sort.Strings(names)
-		for _, n := range names {
-			fv := f.Vars[n]
-			req := ""
-			if fv.Required {
-				req = sWarn.Render(" required")
-			}
-			if fv.Default != "" {
-				req += sDim.Render(" = " + fv.Default)
-			}
-			b.WriteString(ansi.Truncate(" "+sKey.Render(n)+req+sDim.Render("  "+fv.Description), w, "…") + "\n")
+	b.WriteString("\n" + strings.Join(desc, "\n") + "\n")
+	if v.varsOpen {
+		b.WriteString("\n" + sSection.Render(fmt.Sprintf("Vars (%d)", len(f.Vars))) + sDim.Render("  v steps · J/K scroll") + "\n")
+		head := b.String()
+		rows := varRows(f, w, true)
+		room := max(h-strings.Count(head, "\n"), 1)
+		v.varsOff = min(v.varsOff, max(len(rows)-room, 0))
+		end := min(v.varsOff+room, len(rows))
+		return head + strings.Join(rows[v.varsOff:end], "\n")
+	}
+	if rows := varRows(f, w, false); len(rows) > 0 {
+		section := sSection.Render(fmt.Sprintf("Vars (%d)", len(rows)))
+		if strings.Count(b.String(), "\n")+len(rows)+4+minStepRows <= h {
+			b.WriteString("\n" + section + "\n" + strings.Join(rows, "\n") + "\n")
+		} else {
+			b.WriteString("\n" + section + sDim.Render("  v shows them") + "\n")
 		}
 	}
 	b.WriteString("\n" + sSection.Render(fmt.Sprintf("Steps (%d)", len(f.Steps))) + "\n")
@@ -1192,4 +1206,58 @@ func (v *workflowsView) formulaPreview(a *App, s *bd.FormulaSummary, w, h int) s
 		graph = graph[i+2:]
 	}
 	return head + graph
+}
+
+const (
+	minStepRows = 12
+	maxDefaultW = 16
+)
+
+// varRows lays vars out as name, required/default and description columns; wrap continues long descriptions under their column.
+func varRows(f *bd.Formula, w int, wrap bool) []string {
+	names := make([]string, 0, len(f.Vars))
+	nameW, metaW := 0, 0
+	meta := map[string]string{}
+	for n, fv := range f.Vars {
+		names = append(names, n)
+		var m []string
+		if fv.Required {
+			m = append(m, sWarn.Render("required"))
+		}
+		if fv.Default != "" {
+			m = append(m, sDim.Render("= "+ansi.Truncate(fv.Default, maxDefaultW, "…")))
+		}
+		meta[n] = strings.Join(m, " ")
+		nameW, metaW = max(nameW, len(n)), max(metaW, lipgloss.Width(meta[n]))
+	}
+	sort.Strings(names)
+	col := 1 + nameW + 2
+	if metaW > 0 {
+		col += metaW + 2
+	}
+	descW := max(w-col, 10)
+	indent := strings.Repeat(" ", col)
+	var rows []string
+	for _, n := range names {
+		lead := " " + padRight(sKey.Render(n), nameW) + "  "
+		if metaW > 0 {
+			lead += padRight(meta[n], metaW) + "  "
+		}
+		desc := strings.Join(strings.Fields(f.Vars[n].Description), " ")
+		if !wrap {
+			rows = append(rows, ansi.Truncate(lead+sDim.Render(desc), w, "…"))
+			continue
+		}
+		if d := f.Vars[n].Default; lipgloss.Width(d) > maxDefaultW {
+			desc = strings.TrimSpace(desc + " (default: " + d + ")")
+		}
+		for i, l := range strings.Split(ansi.Wrap(desc, descW, " "), "\n") {
+			if i == 0 {
+				rows = append(rows, ansi.Truncate(lead+sDim.Render(l), w, "…"))
+			} else {
+				rows = append(rows, ansi.Truncate(indent+sDim.Render(l), w, "…"))
+			}
+		}
+	}
+	return rows
 }
