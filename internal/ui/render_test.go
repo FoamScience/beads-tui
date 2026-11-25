@@ -838,3 +838,61 @@ func TestWispsStayOutOfOtherViews(t *testing.T) {
 		}
 	}
 }
+
+func TestFormulaVarsAlignAndScroll(t *testing.T) {
+	a := New(bd.Client{Dir: t.TempDir()})
+	a.state, a.host = defaultState(), "u-host"
+	a.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	a.Update(snapshotMsg{issues: fixture(), gen: a.gen})
+	f := &bd.Formula{Name: "big", Description: strings.Repeat("long description ", 80), Vars: map[string]bd.FormulaVar{}}
+	for i := range 16 {
+		f.Vars[fmt.Sprintf("v%s", strings.Repeat("x", i))] = bd.FormulaVar{Description: strings.Repeat("words ", 25), Required: i == 0, Default: map[bool]string{true: "int"}[i%3 == 1]}
+	}
+	f.Vars["a"] = bd.FormulaVar{Description: "short", Required: true, Default: "a/default/longer/than/sixteen"}
+	f.Steps = []bd.FormulaStep{{ID: "s1", Title: "one"}, {ID: "s2", Title: "two", Needs: []string{"s1"}}}
+	v := a.views[a.viewIndex("Workflows")].(*workflowsView)
+	v.loaded, v.formulas, v.details["big"] = true, []bd.FormulaSummary{{Name: "big"}}, f
+	a.switchTo(a.viewIndex("Workflows"))
+	v.Rebuild(a)
+	for _, open := range []bool{false, true} {
+		if open {
+			a.Update(tea.KeyPressMsg{Code: 'v', Text: "v"})
+		}
+		out := ansi.Strip(a.render())
+		if n := len(strings.Split(out, "\n")); n != 30 {
+			t.Fatalf("varsOpen=%v: %d lines, want 30", open, n)
+		}
+		if !open && !strings.Contains(out, "v shows them") {
+			t.Fatal("17 vars should collapse so the step graph keeps its room")
+		}
+		if open {
+			col := -1
+			for _, l := range strings.Split(out, "\n") {
+				if i := strings.Index(l, "words"); i >= 0 && strings.Contains(l, " v") {
+					if col >= 0 && i != col {
+						t.Fatalf("descriptions start at columns %d and %d", col, i)
+					}
+					col = i
+				}
+			}
+			if col < 0 {
+				t.Fatal("var table not shown")
+			}
+			for _, want := range []string{"required = a/default", "a/default/longer/than/sixteen)"} {
+				if !strings.Contains(out, want) {
+					t.Fatalf("var table lacks %q", want)
+				}
+			}
+			sel := v.preview.sel
+			a.Update(tea.KeyPressMsg{Code: 'l', Text: "l"})
+			if v.preview.sel != sel {
+				t.Fatal("l moved the hidden step graph")
+			}
+			before := out
+			a.Update(tea.KeyPressMsg{Code: 'J', Text: "J"})
+			if ansi.Strip(a.render()) == before {
+				t.Fatal("J did not scroll the var table")
+			}
+		}
+	}
+}
