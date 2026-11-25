@@ -23,7 +23,7 @@ var issueTypes = []string{"task", "bug", "feature", "chore", "epic", "decision",
 func (a *App) targets() []*bd.Issue {
 	var out []*bd.Issue
 	for id := range a.marks {
-		if is := a.snap.ByID[id]; is != nil {
+		if is := a.snap.Find(id); is != nil {
 			out = append(out, is)
 		}
 	}
@@ -314,7 +314,7 @@ func parseDate(v string) (string, error) {
 // mut applies an optimistic change to the issue as it is in the snapshot when the write starts.
 func (a *App) mut(id string, f func(*bd.Issue)) func() {
 	return func() {
-		if is := a.snap.ByID[id]; is != nil {
+		if is := a.snap.Find(id); is != nil {
 			f(is)
 		}
 	}

@@ -15,50 +15,84 @@ type Snapshot struct {
 	Loaded   time.Time
 	// Ephemeral indexes the wisp rows on their own, so no rule or view outside Workflows sees them.
 	Ephemeral *Snapshot
-	// peer is the other side of the ephemeral split; blocker and dependent lookups cross it.
-	peer *Snapshot
+	// Gates indexes gate rows (ephemeral or not) on their own, for the same reason: they are
+	// conditions, not work items, and show only as blockers outside Workflows.
+	Gates *Snapshot
+	// peers are the other sides of the split; blocker and dependent lookups cross them.
+	peers      []*Snapshot
+	dependents map[string][]Dependency // depends-on id -> non-parent edges pointing at it
 }
 
 func NewSnapshot(issues []Issue) *Snapshot {
-	var kept, eph []*Issue
+	var kept, eph, gates []*Issue
 	for i := range issues {
-		if issues[i].Ephemeral {
+		switch {
+		case issues[i].IssueType == "gate":
+			gates = append(gates, &issues[i])
+		case issues[i].Ephemeral:
 			eph = append(eph, &issues[i])
-		} else {
+		default:
 			kept = append(kept, &issues[i])
 		}
 	}
 	s := index(kept)
-	s.Ephemeral = index(eph)
-	s.peer, s.Ephemeral.peer = s.Ephemeral, s
+	s.Ephemeral, s.Gates = index(eph), index(gates)
+	s.peers = []*Snapshot{s.Ephemeral, s.Gates}
+	s.Ephemeral.peers = []*Snapshot{s, s.Gates}
+	s.Gates.peers = []*Snapshot{s, s.Ephemeral}
+	// a formula's gate step stays a child of its molecule or wisp, so progress and walks count it
+	for _, g := range gates {
+		if p := s.Find(g.Parent); p != nil {
+			idx := s.Of(p)
+			kids := append(idx.Children[p.ID], g)
+			sort.Slice(kids, func(a, b int) bool { return IDLess(kids[a].ID, kids[b].ID) })
+			idx.Children[p.ID] = kids
+		}
+	}
 	return s
 }
 
-// Find looks an id up on both sides of the ephemeral split.
+// Find looks an id up on every side of the split.
 func (s *Snapshot) Find(id string) *Issue {
-	if is := s.ByID[id]; is != nil || s.peer == nil {
+	if is := s.ByID[id]; is != nil {
 		return is
 	}
-	return s.peer.ByID[id]
+	for _, p := range s.peers {
+		if is := p.ByID[id]; is != nil {
+			return is
+		}
+	}
+	return nil
 }
 
-// Of returns the index holding the issue: s, or the other side of the split.
+// Of returns the index holding the issue: s, or another side of the split.
 func (s *Snapshot) Of(is *Issue) *Snapshot {
-	if s.ByID[is.ID] == nil && s.peer != nil && s.peer.ByID[is.ID] != nil {
-		return s.peer
+	if s.ByID[is.ID] != nil {
+		return s
+	}
+	for _, p := range s.peers {
+		if p.ByID[is.ID] != nil {
+			return p
+		}
 	}
 	return s
 }
 
 func index(issues []*Issue) *Snapshot {
 	s := &Snapshot{
-		Issues:   issues,
-		ByID:     make(map[string]*Issue, len(issues)),
-		Children: map[string][]*Issue{},
-		Loaded:   time.Now(),
+		Issues:     issues,
+		ByID:       make(map[string]*Issue, len(issues)),
+		Children:   map[string][]*Issue{},
+		Loaded:     time.Now(),
+		dependents: map[string][]Dependency{},
 	}
 	for _, is := range issues {
 		s.ByID[is.ID] = is
+		for _, d := range is.Dependencies {
+			if d.Type != "parent-child" {
+				s.dependents[d.DependsOnID] = append(s.dependents[d.DependsOnID], d)
+			}
+		}
 	}
 	for _, is := range s.Issues {
 		if is.Parent != "" {
@@ -90,21 +124,12 @@ func (s *Snapshot) Blockers(is *Issue) []*Issue {
 	return out
 }
 
-// Dependents returns issues on either side of the split that depend on this one through any
+// Dependents returns issues on any side of the split that depend on this one through any
 // non-parent edge.
 func (s *Snapshot) Dependents(id string) []Dependency {
 	var out []Dependency
-	for _, idx := range []*Snapshot{s, s.peer} {
-		if idx == nil {
-			continue
-		}
-		for _, is := range idx.Issues {
-			for _, d := range is.Dependencies {
-				if d.DependsOnID == id && d.Type != "parent-child" {
-					out = append(out, d)
-				}
-			}
-		}
+	for _, idx := range append([]*Snapshot{s}, s.peers...) {
+		out = append(out, idx.dependents[id]...)
 	}
 	return out
 }
@@ -155,8 +180,9 @@ func (s *Snapshot) Root(is *Issue) *Issue {
 }
 
 // Ready reports whether the issue would show in bd ready: open, not deferred, no blocked ancestor.
+// Gates never do: they are conditions, not work.
 func (s *Snapshot) Ready(is *Issue) bool {
-	if is.Status != "open" || is.IssueType == "epic" {
+	if is.Status != "open" || is.IssueType == "epic" || is.IssueType == "gate" {
 		return false
 	}
 	if is.DeferUntil != nil && is.DeferUntil.After(time.Now()) {

@@ -104,7 +104,7 @@ func (v *graphView) members(a *App) map[string]bool {
 		id := queue[0]
 		queue = queue[1:]
 		next := []string{}
-		for _, d := range s.ByID[id].Dependencies {
+		for _, d := range s.Find(id).Dependencies {
 			if bd.Blocking(d.Type) {
 				next = append(next, d.DependsOnID)
 			}
@@ -115,7 +115,7 @@ func (v *graphView) members(a *App) map[string]bool {
 			}
 		}
 		for _, n := range next {
-			if t := s.ByID[n]; t != nil && !set[n] && keep(t) {
+			if t := s.Find(n); t != nil && !set[n] && keep(t) {
 				set[n] = true
 				queue = append(queue, n)
 			}
@@ -133,11 +133,11 @@ func (v *graphView) Rebuild(a *App) {
 	set := v.members(a)
 	preds := map[string][]string{}
 	for id := range set {
-		for _, d := range s.ByID[id].Dependencies {
+		for _, d := range s.Find(id).Dependencies {
 			if !bd.Blocking(d.Type) {
 				continue
 			}
-			t := s.ByID[d.DependsOnID]
+			t := s.Find(d.DependsOnID)
 			if t == nil || (!v.showClosed && t.Closed()) {
 				continue
 			}
@@ -148,7 +148,7 @@ func (v *graphView) Rebuild(a *App) {
 		}
 	}
 	for id := range set {
-		v.nodes[id] = &gnode{id: id, is: s.ByID[id]}
+		v.nodes[id] = &gnode{id: id, is: s.Find(id)}
 	}
 	// longest-path layering; a cycle member is cut at the revisit
 	state := map[string]int{}
