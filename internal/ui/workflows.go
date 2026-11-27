@@ -41,6 +41,11 @@ type (
 		ids  []string
 		err  error
 	}
+	spawnFormulaMsg struct {
+		spec spawnSpec
+		f    bd.Formula
+		err  error
+	}
 	bondFormulaMsg struct {
 		b   bondSpec
 		f   bd.Formula
@@ -451,6 +456,12 @@ func (v *workflowsView) Msg(a *App, msg tea.Msg) tea.Cmd {
 		return nil
 	case wispGCMsg:
 		return confirmGC(a, m)
+	case spawnFormulaMsg:
+		if m.err != nil {
+			return flashErr(m.err)
+		}
+		v.details[m.spec.formula] = &m.f
+		return v.askVars(a, m.spec, &m.f)
 	case bondFormulaMsg:
 		if m.err != nil {
 			return flashErr(m.err)
@@ -556,11 +567,12 @@ func (v *workflowsView) Update(a *App, k tea.KeyPressMsg) (bool, tea.Cmd) {
 		if it == nil || it.formula == nil {
 			return true, flash("select a formula to pour")
 		}
-		f := v.details[it.formula.Name]
-		if f == nil {
-			return true, v.loadFormula(a, it.formula.Name)
+		spec := spawnSpec{formula: it.formula.Name, wisp: k.String() == "w", vars: map[string]string{}}
+		c := a.client
+		return true, func() tea.Msg {
+			f, err := c.Formula(spec.formula)
+			return spawnFormulaMsg{spec, f, err}
 		}
-		return true, v.askVars(a, spawnSpec{formula: f.Name, wisp: k.String() == "w", vars: map[string]string{}}, f)
 	case "G":
 		if !isGate(it) || it.issue.Closed() {
 			return true, flash("select an open gate to resolve")
@@ -709,9 +721,6 @@ func (v *workflowsView) bondModal(a *App, mol *bd.Issue) *modal {
 			b.typ = typ
 			if !b.formula {
 				return dryRunBond(a, b)
-			}
-			if f := v.details[other]; f != nil {
-				return v.promptVars(a, f, b.vars, func() tea.Cmd { return dryRunBond(a, b) })
 			}
 			c := a.client
 			return func() tea.Msg {
@@ -900,12 +909,30 @@ func (v *workflowsView) promptVars(a *App, f *bd.Formula, vars map[string]string
 		n := names[i]
 		fv := f.Vars[n]
 		title := fmt.Sprintf("%s (%d/%d)", n, i+1, len(names))
+		if fv.Required {
+			title += " required"
+		}
 		if fv.Description != "" {
 			title += ": " + fv.Description
 		}
+		if len(fv.Enum) > 0 {
+			opts := make([]option, len(fv.Enum))
+			for j, e := range fv.Enum {
+				opts[j] = option{e, e}
+				if e == fv.Default {
+					opts[j].label += "  (default)"
+				}
+			}
+			a.modal = newPicker(title, opts, func(val string) tea.Cmd {
+				vars[n] = val
+				return ask(i + 1)
+			})
+			a.modal.cursor = max(slices.Index(fv.Enum, fv.Default), 0)
+			return nil
+		}
 		a.modal = newPrompt(title, fv.Default, func(val string) tea.Cmd {
 			if val == "" && fv.Required {
-				return flashErr(fmt.Errorf("%s is required", n))
+				return tea.Batch(ask(i), flashErr(fmt.Errorf("%s is required", n)))
 			}
 			if val != "" {
 				vars[n] = val
@@ -923,16 +950,7 @@ func (v *workflowsView) confirmSpawn(a *App, spec spawnSpec, preview string) {
 	if spec.wisp {
 		verb = "Wisp"
 	}
-	var lines []string
-	for _, l := range strings.Split(strings.TrimSpace(preview), "\n") {
-		if strings.TrimSpace(l) != "" && !strings.HasPrefix(strings.TrimSpace(l), "⚠") {
-			lines = append(lines, l)
-		}
-	}
-	if len(lines) > 14 {
-		lines = append(lines[:14], fmt.Sprintf("  … %d more", len(lines)-14))
-	}
-	a.modal = newConfirm(verb+" "+spec.formula+"?\n\n"+strings.Join(lines, "\n"), func() tea.Cmd {
+	a.modal = newConfirm(verb+" "+spec.formula+"?", func() tea.Cmd {
 		opts := []option{{"", "(top level)"}}
 		for _, is := range a.snap.Issues {
 			if is.IssueType == "epic" && !is.Closed() {
@@ -961,6 +979,111 @@ func (v *workflowsView) confirmSpawn(a *App, spec spawnSpec, preview string) {
 		})
 		return nil
 	})
+	a.modal.body = spawnPreview(spec, v.details[spec.formula], preview)
+}
+
+var previewStep = regexp.MustCompile(`^\s*-\s+(.*?)\s+\(from ([^)]+)\)$`)
+
+// spawnPreview lays out bd's dry run: its summary, the vars that differ from their defaults, and
+// the formula's steps with the ones a condition dropped struck out.
+func spawnPreview(spec spawnSpec, f *bd.Formula, preview string) func(w, h int) string {
+	var summary []string
+	titles := map[string]string{}
+	var order []string
+	for _, l := range strings.Split(strings.TrimSpace(preview), "\n") {
+		t := strings.TrimSpace(l)
+		if t == "" || strings.HasPrefix(t, "⚠") || strings.HasPrefix(t, "Dry run:") {
+			continue
+		}
+		if m := previewStep.FindStringSubmatch(l); m != nil {
+			if id, ok := strings.CutPrefix(m[2], spec.formula+"."); ok {
+				titles[id] = m[1]
+				order = append(order, id)
+			}
+			continue
+		}
+		summary = append(summary, t)
+	}
+	if f != nil {
+		order = order[:0]
+		for _, st := range f.Steps {
+			order = append(order, st.ID)
+		}
+	}
+	created := make([]bd.FormulaStep, 0, len(titles))
+	for _, id := range order {
+		if t, ok := titles[id]; ok {
+			created = append(created, bd.FormulaStep{Title: t})
+		}
+	}
+	prefix := bd.CommonTitlePrefix(created)
+
+	var set, defaults []string
+	names := make([]string, 0, len(spec.vars))
+	for n := range spec.vars {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	nameW := 0
+	for _, n := range names {
+		if f != nil && f.Vars[n].Default == spec.vars[n] {
+			defaults = append(defaults, n+"="+spec.vars[n])
+			continue
+		}
+		set = append(set, n)
+		nameW = max(nameW, len(n))
+	}
+
+	return func(w, h int) string {
+		var lines []string
+		add := func(s string) { lines = append(lines, ansi.Truncate(s, w, "…")) }
+		for _, l := range summary {
+			add(sDim.Render(l))
+		}
+		if len(set)+len(defaults) > 0 {
+			add("")
+			add(sSection.Render("Variables"))
+			for _, n := range set {
+				add("  " + sDim.Render(fmt.Sprintf("%-*s", nameW, n)) + "  " + sBold.Render(spec.vars[n]))
+			}
+			if len(defaults) > 0 {
+				lead := "  defaults  "
+				for i, l := range strings.Split(ansi.Wordwrap(strings.Join(defaults, " "), w-len(lead), " "), "\n") {
+					if i > 0 {
+						lead = strings.Repeat(" ", len(lead))
+					}
+					add(sDim.Render(lead + l))
+				}
+			}
+		}
+		add("")
+		head := sSection.Render(fmt.Sprintf("Steps  %d of %d", len(created), len(order)))
+		if prefix != "" {
+			head += "  " + sDim.Render(strings.TrimSuffix(prefix, ": "))
+		}
+		add(head)
+		idW := 0
+		for _, id := range order {
+			idW = max(idW, len(id))
+		}
+		var steps []string
+		for i, id := range order {
+			num := sDim.Render(fmt.Sprintf("%2d", i+1))
+			if t, ok := titles[id]; ok {
+				steps = append(steps, num+" "+sAccent.Render("○")+" "+fmt.Sprintf("%-*s", idW, id)+"  "+strings.TrimPrefix(t, prefix))
+			} else {
+				steps = append(steps, num+" "+sDim.Render("– "+fmt.Sprintf("%-*s", idW, id)+"  skipped by its condition"))
+			}
+		}
+		room := max(h-len(lines), 2)
+		if len(steps) > room {
+			steps = append(steps[:room-1], sDim.Render(fmt.Sprintf("   … %d more", len(steps)-room+1)))
+		}
+		for _, st := range steps {
+			add(st)
+		}
+		return strings.Join(lines, "\n")
+	}
 }
 
 func (v *workflowsView) spawn(a *App, spec spawnSpec) tea.Cmd {
