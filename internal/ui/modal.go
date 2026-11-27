@@ -25,6 +25,7 @@ type modal struct {
 	multi    bool
 	checked  map[string]bool
 	confirm  bool
+	body     func(w, h int) string    // drawn under the title, sized to the box
 	rank     func(query string) []int // replaces the substring filter with a ranked option order
 	toggle   string                   // hint for tab, which runs onToggle and filters again
 	onToggle func()
@@ -161,6 +162,9 @@ func (m *modal) view(w, h int) string {
 	var b strings.Builder
 	b.WriteString(sBold.Render(m.title))
 	b.WriteString("\n\n")
+	if m.body != nil {
+		b.WriteString(m.body(inner, max(h-8, 3)) + "\n\n")
+	}
 	if m.confirm {
 		b.WriteString(sKey.Render("y") + " yes   " + sKey.Render("n") + " no")
 	} else {

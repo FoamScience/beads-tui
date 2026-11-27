@@ -17,9 +17,10 @@ type FormulaSummary struct {
 }
 
 type FormulaVar struct {
-	Description string `json:"description"`
-	Required    bool   `json:"required"`
-	Default     string `json:"default"`
+	Description string   `json:"description"`
+	Required    bool     `json:"required"`
+	Default     string   `json:"default"`
+	Enum        []string `json:"enum"`
 }
 
 type FormulaStep struct {
@@ -59,7 +60,7 @@ func (c Client) Formula(name string) (Formula, error) {
 func (f Formula) Snapshot() *Snapshot {
 	root := Issue{ID: f.Name, Title: f.Name, IssueType: "epic", Status: "open"}
 	issues := []Issue{root}
-	prefix := commonTitlePrefix(f.Steps)
+	prefix := CommonTitlePrefix(f.Steps)
 	for _, st := range f.Steps {
 		is := Issue{ID: st.ID, Title: strings.TrimPrefix(st.Title, prefix), IssueType: st.Type, Status: "open", Priority: st.Priority, Labels: st.Labels, Parent: f.Name, Description: st.Description}
 		for _, n := range append(st.Needs, st.DependsOn...) {
@@ -125,8 +126,8 @@ func (c Client) DryRun(name string, wisp bool, vars map[string]string) (string, 
 	return string(out), err
 }
 
-// commonTitlePrefix finds a shared "name {{var}}: " lead-in so previews show what differs.
-func commonTitlePrefix(steps []FormulaStep) string {
+// CommonTitlePrefix finds a shared "name {{var}}: " lead-in so previews show what differs.
+func CommonTitlePrefix(steps []FormulaStep) string {
 	if len(steps) < 2 {
 		return ""
 	}

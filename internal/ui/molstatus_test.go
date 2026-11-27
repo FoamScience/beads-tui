@@ -201,12 +201,12 @@ esac`)
 		t.Fatalf("join ran bd %q: %+v", lastCall(), m)
 	}
 
-	v.details = map[string]*bd.Formula{}
+	v.details["extra"] = &bd.Formula{Name: "extra"}
 	key("+")
 	a.modal.onSubmit([]string{"f:extra"})
 	fetched := a.modal.onSubmit([]string{"sequential"})().(bondFormulaMsg)
 	if fetched.err != nil || lastCall() != "formula show extra --json" {
-		t.Fatalf("an unloaded formula should be read on demand: bd %q, %+v", lastCall(), fetched)
+		t.Fatalf("a cached formula should be read again before prompting its vars: bd %q, %+v", lastCall(), fetched)
 	}
 	if m, ok := v.Msg(a, bondFormulaMsg{b: fetched.b, err: errors.New("no such formula")})().(flashMsg); !ok || !m.err {
 		t.Fatalf("a failed formula read should flash an error, got %#v", m)
@@ -220,5 +220,55 @@ esac`)
 	m := a.modal.onSubmit(nil)().(writeDoneMsg)
 	if m.err != nil || !strings.Contains(m.desc, "as t-new") || lastCall() != "update t-new --add-label machine:u-host" {
 		t.Fatalf("a sequential formula bond should label its new root for this host: bd %q, %+v", lastCall(), m)
+	}
+}
+
+func TestSpawnRereadsFormula(t *testing.T) {
+	lastCall := fakeBD(t, `case "$*" in
+"formula show"*) printf '{"formula":"extra","vars":{"who":{"required":true},"mode":{"default":"b","enum":["a","b"]}}}';;
+*--dry-run*) echo "Dry run: pour preview";;
+esac`)
+	a, v := workflowsApp(t, molFixture())
+	v.details["extra"] = &bd.Formula{Name: "extra"}
+	pickRow(v, func(it molItem) bool { return it.formula != nil })
+	_, cmd := v.Update(a, tea.KeyPressMsg{Code: 'p', Text: "p"})
+	fetched := cmd().(spawnFormulaMsg)
+	if fetched.err != nil || lastCall() != "formula show extra --json" {
+		t.Fatalf("pour should read the formula again, not trust the cache: bd %q, %+v", lastCall(), fetched)
+	}
+	v.Msg(a, fetched)
+	if a.modal == nil || !a.modal.picker || !strings.HasPrefix(a.modal.title, "mode (1/2)") || a.modal.cursor != 1 {
+		t.Fatalf("an enum var should be a picker starting on its default, got %#v", a.modal)
+	}
+	a.modal.onSubmit([]string{"a"})
+	if a.modal == nil || a.modal.picker || !strings.HasPrefix(a.modal.title, "who (2/2)") {
+		t.Fatalf("pour should prompt for a var the cached copy lacked, got %#v", a.modal)
+	}
+	who := a.modal
+	if m, ok := a.modal.onSubmit([]string{""})().(flashMsg); !ok || !m.err || a.modal == nil || a.modal == who || !strings.HasPrefix(a.modal.title, "who (2/2) required") {
+		t.Fatalf("an empty required var should flash and ask again, got %#v, modal %#v", m, a.modal)
+	}
+	a.modal.onSubmit([]string{"ace"})()
+	if got := lastCall(); got != "mol pour extra --dry-run --var mode=a --var who=ace" && got != "mol pour extra --dry-run --var who=ace --var mode=a" {
+		t.Fatalf("pour dry run ran bd %q", got)
+	}
+}
+
+func TestSpawnPreviewLayout(t *testing.T) {
+	f := &bd.Formula{Name: "st", Vars: map[string]bd.FormulaVar{"host": {}, "mode": {Default: "on"}}, Steps: []bd.FormulaStep{{ID: "plan"}, {ID: "sync"}, {ID: "run"}}}
+	preview := `Dry run: would create wisp with 3 issues from proto st
+Storage: main database (ephemeral=true, not synced via git)
+  - st (from st)
+  - st x: write the plan (from st.plan)
+  - st x: run it on h1 (from st.run)
+`
+	out := ansi.Strip(spawnPreview(spawnSpec{formula: "st", vars: map[string]string{"host": "h1", "mode": "on"}}, f, preview)(80, 30))
+	for _, want := range []string{"Storage: main database", "host  h1", "defaults  mode=on", "Steps  2 of 3  st x", " 1 ○ plan  write the plan", " 2 – sync  skipped by its condition", " 3 ○ run   run it on h1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("preview lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Dry run:") || strings.Contains(out, "(from") {
+		t.Errorf("preview should drop bd's raw lines:\n%s", out)
 	}
 }
